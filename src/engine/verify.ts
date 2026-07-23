@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 import type { ExpectedShape } from "../schema/recipe.js";
 import { ConductorEngineError } from "./errors.js";
 
@@ -22,6 +24,14 @@ function assertAtPath(
       "VERIFY_FAILED",
       `Expected ${path} to be ${shape.type}, received ${received}`,
       { details: { path, expected: shape.type, received } },
+    );
+  }
+
+  if (shape.equals !== undefined && !isDeepStrictEqual(value, shape.equals)) {
+    throw new ConductorEngineError(
+      "VERIFY_FAILED",
+      `Expected ${path} to equal ${JSON.stringify(shape.equals)}`,
+      { details: { path, expected: shape.equals, received: value } },
     );
   }
 

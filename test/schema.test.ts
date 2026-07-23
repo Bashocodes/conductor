@@ -28,9 +28,10 @@ const validRecipe = {
     {
       id: "create-title",
       server: "aftereffects",
-      tool: "create_title",
+      operation: "projectInfo",
       args: {
-        text: "${params.text}",
+        action: "inspect",
+        settings: {},
       },
       verify: {
         type: "object",

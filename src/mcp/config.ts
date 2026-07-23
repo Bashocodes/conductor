@@ -3,12 +3,15 @@ import { resolve } from "node:path";
 
 import { z } from "zod";
 
+import { adapterConfigSchema } from "../adapters/config.js";
+
 const stdioServerSchema = z
   .object({
     transport: z.literal("stdio"),
     command: z.string().min(1),
     args: z.array(z.string()).default([]),
     env: z.record(z.string(), z.string()).optional(),
+    adapter: adapterConfigSchema.optional(),
   })
   .strict();
 
@@ -16,6 +19,7 @@ const httpServerSchema = z
   .object({
     transport: z.literal("http"),
     url: z.url(),
+    adapter: adapterConfigSchema.optional(),
   })
   .strict();
 

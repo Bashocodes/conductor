@@ -12,6 +12,7 @@ import {
 } from "./mcp/config.js";
 import { listRecipes, getRecipe } from "./recipes/index.js";
 import type { ParamDefinition } from "./schema/recipe.js";
+import { createAdapterRegistryFromConfig } from "./adapters/registry.js";
 
 interface CliIo {
   stdout: Pick<NodeJS.WriteStream, "write">;
@@ -163,9 +164,11 @@ export function createProgram(
         }>();
         const config = await loadConductorConfig(globalOptions.config);
         const clients = new McpClientManager(config);
+        const adapters = createAdapterRegistryFromConfig(config);
         try {
           const result = await new RecipeEngine({
             clientProvider: clients,
+            adapters,
           }).run(recipe, params);
           io.stdout.write(
             `Run ${result.runId} completed.\nJournal: ${result.journalPath}\n`,

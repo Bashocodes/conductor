@@ -1,21 +1,9 @@
 import { z } from "zod";
 
-export type JsonPrimitive = string | number | boolean | null;
-export type JsonValue =
-  | JsonPrimitive
-  | JsonValue[]
-  | { [key: string]: JsonValue };
+import { toolOperationSchema } from "../adapters/toolContract.js";
+import { jsonValueSchema, type JsonValue } from "./json.js";
 
-export const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
-  z.union([
-    z.string(),
-    z.number().finite(),
-    z.boolean(),
-    z.null(),
-    z.array(jsonValueSchema),
-    z.record(z.string(), jsonValueSchema),
-  ]),
-);
+export * from "./json.js";
 
 const identifierSchema = z
   .string()
@@ -229,6 +217,7 @@ export interface ExpectedShape {
   required?: string[];
   properties?: Record<string, ExpectedShape>;
   items?: ExpectedShape;
+  equals?: JsonValue;
 }
 
 export const expectedShapeSchema: z.ZodType<ExpectedShape> = z.lazy(() =>
@@ -238,6 +227,7 @@ export const expectedShapeSchema: z.ZodType<ExpectedShape> = z.lazy(() =>
       required: z.array(z.string().min(1)).optional(),
       properties: z.record(z.string(), expectedShapeSchema).optional(),
       items: expectedShapeSchema.optional(),
+      equals: jsonValueSchema.optional(),
     })
     .strict()
     .superRefine((shape, context) => {
@@ -264,11 +254,12 @@ export const recipeStepSchema = z
   .object({
     id: identifierSchema,
     server: identifierSchema,
-    tool: z.string().min(1),
+    operation: toolOperationSchema,
     args: z.record(z.string(), jsonValueSchema).default({}),
     timeoutMs: z.number().int().positive().max(3_600_000).default(30_000),
     precondition: z.string().min(1).optional(),
     verify: expectedShapeSchema.optional(),
+    note: z.string().min(1).optional(),
   })
   .strict();
 

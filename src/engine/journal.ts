@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import type { JsonValue } from "../schema/recipe.js";
+import type { ToolOperation } from "../adapters/toolContract.js";
 import { ConductorEngineError } from "./errors.js";
 
 export interface JournalError {
@@ -14,13 +15,16 @@ export interface JournalError {
 export interface JournalStep {
   id: string;
   server: string;
-  tool: string;
+  operation: ToolOperation;
+  tool?: string;
   status: "succeeded" | "skipped" | "failed";
   startedAt: string;
   durationMs: number;
   args?: Record<string, JsonValue>;
+  contractArgs?: Record<string, JsonValue>;
   resultSummary?: unknown;
   precondition?: string;
+  note?: string;
   error?: JournalError;
 }
 

@@ -31,8 +31,9 @@ environment values, and private HTTP endpoints vary by machine.
 ```sh
 pnpm build
 node dist/cli.js recipes
-node dist/cli.js run demo-title-card --dry-run \
-  --param text="Hello from Conductor"
+node dist/cli.js run title-card --dry-run \
+  --param text="Hello from Conductor" \
+  --param outputPath=/renders/title-card.mov
 node dist/cli.js doctor
 ```
 
@@ -40,8 +41,9 @@ When the package is installed, the same commands use the `conductor` binary
 declared by the package, for example `conductor recipes`.
 
 `--dry-run` validates the recipe and parameters, applies defaults, resolves all
-parameter references in step arguments, and preserves prior-output references
-symbolically. It never loads config or connects to a server.
+parameter references in step arguments, removes branches whose parameter-only
+preconditions are false, and preserves prior-output references symbolically. It
+never loads config or connects to a server.
 
 Every real run writes `runs/<run-id>.json`, including resolved arguments,
 bounded result summaries, duration, skipped steps, and structured failures.
@@ -79,3 +81,8 @@ pnpm verify
 ```
 
 This runs strict TypeScript checking, the Vitest suite, and the ESM build.
+
+Contributor documentation:
+
+- [Recipe anatomy and the three references](docs/RECIPES.md)
+- [Mapping your Adobe MCP server](docs/ADAPTERS.md)

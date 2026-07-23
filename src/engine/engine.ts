@@ -4,6 +4,10 @@ import { performance } from "node:perf_hooks";
 import { ConductorMcpError } from "../mcp/errors.js";
 import type { McpClientProvider } from "../mcp/types.js";
 import type { JsonValue } from "../schema/recipe.js";
+import {
+  AdapterRegistry,
+  createDefaultAdapterRegistry,
+} from "../adapters/registry.js";
 import { resolveRecipeParams } from "./dry-run.js";
 import { ConductorEngineError } from "./errors.js";
 import {
@@ -22,6 +26,7 @@ import { verifyExpectedShape } from "./verify.js";
 
 export interface EngineOptions {
   clientProvider: McpClientProvider;
+  adapters?: AdapterRegistry;
   journalWriter?: JournalWriter;
   now?: () => Date;
   createRunId?: (recipeId: string, startedAt: Date) => string;
@@ -70,12 +75,14 @@ async function withTimeout<T>(
 
 export class RecipeEngine {
   readonly #clientProvider: McpClientProvider;
+  readonly #adapters: AdapterRegistry;
   readonly #journalWriter: JournalWriter;
   readonly #now: () => Date;
   readonly #createRunId: (recipeId: string, startedAt: Date) => string;
 
   public constructor(options: EngineOptions) {
     this.#clientProvider = options.clientProvider;
+    this.#adapters = options.adapters ?? createDefaultAdapterRegistry();
     this.#journalWriter = options.journalWriter ?? new JournalWriter();
     this.#now = options.now ?? (() => new Date());
     this.#createRunId = options.createRunId ?? defaultRunId;
@@ -111,6 +118,7 @@ export class RecipeEngine {
       for (const step of recipe.steps) {
         const stepStartedAt = this.#now();
         const timerStarted = performance.now();
+        const adapter = this.#adapters.get(step.server);
 
         if (
           step.precondition !== undefined &&
@@ -120,24 +128,30 @@ export class RecipeEngine {
           journalSteps.push({
             id: step.id,
             server: step.server,
-            tool: step.tool,
+            operation: step.operation,
             status: "skipped",
             startedAt: stepStartedAt.toISOString(),
             durationMs: elapsedMilliseconds(timerStarted),
             precondition: step.precondition,
+            ...(step.note === undefined ? {} : { note: step.note }),
           });
           continue;
         }
 
-        let resolvedArgs: Record<string, JsonValue> | undefined;
+        let contractArgs: Record<string, JsonValue> | undefined;
+        let mappedTool: string | undefined;
+        let mappedArgs: Record<string, JsonValue> | undefined;
         try {
-          resolvedArgs = interpolateArgs(step.args, context);
+          contractArgs = interpolateArgs(step.args, context);
+          const mapped = adapter.mapCall(step.operation, contractArgs);
+          mappedTool = mapped.tool;
+          mappedArgs = mapped.args;
           const connection = await this.#clientProvider.get(step.server);
           const result = await withTimeout(
-            connection.callTool(step.tool, resolvedArgs, step.timeoutMs),
+            connection.callTool(mapped.tool, mapped.args, step.timeoutMs),
             step.timeoutMs,
             step.server,
-            step.tool,
+            mapped.tool,
           );
 
           if (step.verify !== undefined) {
@@ -151,28 +165,34 @@ export class RecipeEngine {
           journalSteps.push({
             id: step.id,
             server: step.server,
-            tool: step.tool,
+            operation: step.operation,
+            tool: mapped.tool,
             status: "succeeded",
             startedAt: stepStartedAt.toISOString(),
             durationMs: elapsedMilliseconds(timerStarted),
-            args: resolvedArgs,
+            args: mapped.args,
+            contractArgs,
             resultSummary: summarizeResult(result),
             ...(step.precondition === undefined
               ? {}
               : { precondition: step.precondition }),
+            ...(step.note === undefined ? {} : { note: step.note }),
           });
         } catch (error) {
           journalSteps.push({
             id: step.id,
             server: step.server,
-            tool: step.tool,
+            operation: step.operation,
+            ...(mappedTool === undefined ? {} : { tool: mappedTool }),
             status: "failed",
             startedAt: stepStartedAt.toISOString(),
             durationMs: elapsedMilliseconds(timerStarted),
-            ...(resolvedArgs === undefined ? {} : { args: resolvedArgs }),
+            ...(mappedArgs === undefined ? {} : { args: mappedArgs }),
+            ...(contractArgs === undefined ? {} : { contractArgs }),
             ...(step.precondition === undefined
               ? {}
               : { precondition: step.precondition }),
+            ...(step.note === undefined ? {} : { note: step.note }),
             error: serializeError(error),
           });
           throw new ConductorEngineError(
@@ -183,7 +203,8 @@ export class RecipeEngine {
               details: {
                 stepId: step.id,
                 server: step.server,
-                tool: step.tool,
+                operation: step.operation,
+                ...(mappedTool === undefined ? {} : { tool: mappedTool }),
               },
             },
           );

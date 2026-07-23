@@ -1,0 +1,769 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] = `
+{
+  "params": {
+    "clip": "/media/source.mov",
+    "outputPath": "/renders/hlg-master.mov",
+    "target": "hlg",
+  },
+  "recipeId": "hdr-safe-grade",
+  "steps": [
+    {
+      "args": {
+        "action": "inspect",
+        "media_path": "/media/source.mov",
+        "settings": {
+          "includeColorMetadata": true,
+          "includeFrameRateAndDuration": true,
+        },
+      },
+      "id": "inspect-source-metadata",
+      "operation": "projectInfo",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_project_info",
+      "verify": {
+        "properties": {
+          "structuredContent": {
+            "required": [
+              "width",
+              "height",
+              "frameRate",
+              "durationSeconds",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+    {
+      "args": {
+        "action": "configure",
+        "settings": {
+          "bitDepth": 32,
+          "compensateForSceneReferredProfiles": true,
+          "displayColorManagement": true,
+          "intent": "technical-normalization-only",
+          "linearizeWorkingSpace": false,
+          "workingSpace": "Rec.2100 HLG",
+        },
+      },
+      "id": "configure-hlg-working-project",
+      "operation": "projectInfo",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_project_info",
+      "verify": {
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+    {
+      "args": {
+        "name": "Conductor HLG Technical Master",
+        "settings": {
+          "background_color": "#000000",
+          "duration_seconds": "\${steps.inspect-source-metadata.result.structuredContent.durationSeconds}",
+          "frame_rate": "\${steps.inspect-source-metadata.result.structuredContent.frameRate}",
+          "height": "\${steps.inspect-source-metadata.result.structuredContent.height}",
+          "pixel_aspect": 1,
+          "width": "\${steps.inspect-source-metadata.result.structuredContent.width}",
+        },
+      },
+      "id": "build-source-matched-composition",
+      "operation": "createComp",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_create_composition",
+      "verify": {
+        "properties": {
+          "structuredContent": {
+            "required": [
+              "compId",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+    {
+      "args": {
+        "collapse_transformations": false,
+        "composition_id": "\${steps.build-source-matched-composition.result.structuredContent.compId}",
+        "layer_ids": [],
+        "motion_blur": false,
+        "name": "Source Technical Grade",
+        "sources": [
+          {
+            "path": "/media/source.mov",
+            "role": "source",
+            "startTimeSeconds": 0,
+          },
+        ],
+      },
+      "id": "prepare-source-for-technical-grade",
+      "operation": "precompose",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_precompose",
+      "verify": {
+        "properties": {
+          "structuredContent": {
+            "required": [
+              "layerId",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+    {
+      "args": {
+        "effect_name": "Exposure",
+        "parameters": {
+          "allowedAdjustmentStops": [
+            -1,
+            1,
+          ],
+          "creativeLook": false,
+          "exposureStops": 0,
+          "gammaCorrection": 1,
+          "offset": 0,
+        },
+        "target_id": "\${steps.prepare-source-for-technical-grade.result.structuredContent.layerId}",
+        "timing": {
+          "at_seconds": 0,
+          "duration_seconds": "\${steps.inspect-source-metadata.result.structuredContent.durationSeconds}",
+        },
+      },
+      "id": "bounded-exposure-normalization",
+      "operation": "applyEffect",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_apply_effect",
+      "verify": {
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+    {
+      "args": {
+        "effect_name": "Levels",
+        "parameters": {
+          "clampSuperBlack": true,
+          "clampSuperWhite": true,
+          "creativeLook": false,
+          "gamma": 1,
+          "inputBlack": 0,
+          "inputWhite": 1,
+          "outputBlack": 0,
+          "outputWhite": 0.98,
+        },
+        "target_id": "\${steps.prepare-source-for-technical-grade.result.structuredContent.layerId}",
+        "timing": {
+          "at_seconds": 0,
+          "duration_seconds": "\${steps.inspect-source-metadata.result.structuredContent.durationSeconds}",
+        },
+      },
+      "id": "broadcast-safe-levels-clamp",
+      "operation": "applyEffect",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_apply_effect",
+      "verify": {
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+    {
+      "args": {
+        "action": "configure",
+        "settings": {
+          "creativeLook": false,
+          "outputBitDepth": 10,
+          "outputColorSpace": "Rec.2100 HLG",
+          "preserveSourceLuminance": true,
+          "renderAtMaximumDepth": true,
+          "target": "hlg",
+        },
+      },
+      "id": "configure-10bit-hlg-output",
+      "operation": "projectInfo",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_project_info",
+      "verify": {
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+    {
+      "args": {
+        "composition_id": "\${steps.build-source-matched-composition.result.structuredContent.compId}",
+        "output_module": {
+          "bit_depth": 10,
+          "codec": "ProRes 422 HQ",
+          "color_space": "Rec.2100 HLG",
+          "format": "QuickTime",
+        },
+        "output_path": "/renders/hlg-master.mov",
+        "render_settings": {
+          "alpha": false,
+          "colorManagement": "preserve-hlg",
+          "quality": "best",
+          "renderAtMaximumDepth": true,
+        },
+      },
+      "id": "queue-verified-10bit-hlg-render",
+      "note": "Technical handoff: finish and validate the rendered output with the external DV tool reel-hdr before delivery.",
+      "operation": "queueRender",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_queue_render",
+      "verify": {
+        "properties": {
+          "structuredContent": {
+            "properties": {
+              "outputPath": {
+                "type": "string",
+              },
+              "queued": {
+                "equals": true,
+                "type": "boolean",
+              },
+            },
+            "required": [
+              "queued",
+              "outputPath",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+  ],
+  "title": "HDR-Safe Technical Grade",
+}
+`;
+
+exports[`reference recipe dry runs > snapshots the motivated-transition checklist 1`] = `
+{
+  "params": {
+    "clipA": "/media/clip-a.mov",
+    "clipB": "/media/clip-b.mov",
+    "outputPath": "/renders/motivated-transition.mov",
+    "style": "luma-wipe",
+  },
+  "recipeId": "motivated-transition",
+  "steps": [
+    {
+      "args": {
+        "action": "inspect",
+        "settings": {},
+      },
+      "id": "inspect-edit-project",
+      "operation": "projectInfo",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_project_info",
+      "verify": {
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+    {
+      "args": {
+        "name": "Conductor Motivated Transition",
+        "settings": {
+          "background_color": "#000000",
+          "duration_seconds": 6,
+          "frame_rate": 24,
+          "height": 1080,
+          "pixel_aspect": 1,
+          "width": 1920,
+        },
+      },
+      "id": "build-transition-composition",
+      "operation": "createComp",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_create_composition",
+      "verify": {
+        "properties": {
+          "structuredContent": {
+            "required": [
+              "compId",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+    {
+      "args": {
+        "collapse_transformations": false,
+        "composition_id": "\${steps.build-transition-composition.result.structuredContent.compId}",
+        "layer_ids": [],
+        "motion_blur": true,
+        "name": "Outgoing Clip",
+        "sources": [
+          {
+            "path": "/media/clip-a.mov",
+            "role": "outgoing",
+            "startTimeSeconds": 0,
+          },
+        ],
+      },
+      "id": "prepare-outgoing-clip",
+      "operation": "precompose",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_precompose",
+      "verify": {
+        "properties": {
+          "structuredContent": {
+            "required": [
+              "layerId",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+    {
+      "args": {
+        "collapse_transformations": false,
+        "composition_id": "\${steps.build-transition-composition.result.structuredContent.compId}",
+        "layer_ids": [],
+        "motion_blur": true,
+        "name": "Incoming Clip",
+        "sources": [
+          {
+            "path": "/media/clip-b.mov",
+            "role": "incoming",
+            "startTimeSeconds": 2.5,
+          },
+        ],
+      },
+      "id": "prepare-incoming-clip",
+      "operation": "precompose",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_precompose",
+      "verify": {
+        "properties": {
+          "structuredContent": {
+            "required": [
+              "layerId",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+    {
+      "args": {
+        "effect_name": "Directional Luma Matte",
+        "parameters": {
+          "directionDegrees": 0,
+          "featherPixels": 140,
+          "source": "procedural-ramp",
+          "travelDirection": "left-to-right",
+        },
+        "target_id": "\${steps.prepare-incoming-clip.result.structuredContent.layerId}",
+        "timing": {
+          "at_seconds": 2.5,
+          "duration_seconds": 1,
+        },
+      },
+      "id": "directional-luma-matte",
+      "operation": "applyEffect",
+      "precondition": "\${params.style} == "luma-wipe"",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_apply_effect",
+      "verify": {
+        "properties": {
+          "structuredContent": {
+            "required": [
+              "effectId",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+    {
+      "args": {
+        "keyframes": [
+          {
+            "time": 2.55,
+            "value": 0,
+          },
+          {
+            "time": 3.45,
+            "value": 100,
+          },
+        ],
+        "layer_id": "\${steps.directional-luma-matte.result.structuredContent.effectId}",
+        "motion_blur": false,
+        "property": "progress",
+        "temporal_easing": {
+          "controlPoints": [
+            0.25,
+            0.1,
+            0.25,
+            1,
+          ],
+          "profile": "directional-wipe",
+          "type": "cubic-bezier",
+        },
+        "time_mode": "seconds",
+      },
+      "id": "luma-wipe-directional-progress",
+      "operation": "setKeyframes",
+      "precondition": "\${params.style} == "luma-wipe"",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_set_keyframes",
+      "verify": {
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+    {
+      "args": {
+        "composition_id": "\${steps.build-transition-composition.result.structuredContent.compId}",
+        "output_module": {
+          "bit_depth": 10,
+          "codec": "ProRes 422",
+          "color_space": "Rec.709 Gamma 2.4",
+          "format": "QuickTime",
+        },
+        "output_path": "/renders/motivated-transition.mov",
+        "render_settings": {
+          "frameBlending": true,
+          "motionBlur": true,
+          "quality": "best",
+        },
+      },
+      "id": "queue-verified-transition-render",
+      "note": "Transition is motivated by light, luminance direction, or matched movement; no unmotivated crossfade is present.",
+      "operation": "queueRender",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_queue_render",
+      "verify": {
+        "properties": {
+          "structuredContent": {
+            "properties": {
+              "outputPath": {
+                "type": "string",
+              },
+              "queued": {
+                "equals": true,
+                "type": "boolean",
+              },
+            },
+            "required": [
+              "queued",
+              "outputPath",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+  ],
+  "title": "Motivated Transition",
+}
+`;
+
+exports[`reference recipe dry runs > snapshots the title-card checklist 1`] = `
+{
+  "params": {
+    "duration": 4,
+    "font": "Sans Serif",
+    "inOutStyle": "rise",
+    "outputPath": "/renders/title-card.mov",
+    "sizePreset": "medium",
+    "text": "Reference Title",
+  },
+  "recipeId": "title-card",
+  "steps": [
+    {
+      "args": {
+        "action": "inspect",
+        "settings": {},
+      },
+      "id": "inspect-project-state",
+      "operation": "projectInfo",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_project_info",
+      "verify": {
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+    {
+      "args": {
+        "name": "Conductor Title Card",
+        "settings": {
+          "background_color": "#101010",
+          "duration_seconds": 4,
+          "frame_rate": 24,
+          "height": 1080,
+          "pixel_aspect": 1,
+          "width": 1920,
+        },
+      },
+      "id": "build-title-composition",
+      "operation": "createComp",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_create_composition",
+      "verify": {
+        "properties": {
+          "structuredContent": {
+            "required": [
+              "compId",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+    {
+      "args": {
+        "composition_id": "\${steps.build-title-composition.result.structuredContent.compId}",
+        "layer": {
+          "alignment": "center",
+          "color": "#F2F2F2",
+          "font": "Sans Serif",
+          "motion_blur": true,
+          "name": "Primary Title",
+          "position": [
+            960,
+            540,
+          ],
+          "size_preset": "medium",
+          "text": "Reference Title",
+        },
+      },
+      "id": "place-centered-title-layer",
+      "operation": "addTextLayer",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_add_text_layer",
+      "verify": {
+        "properties": {
+          "structuredContent": {
+            "required": [
+              "layerId",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+    {
+      "args": {
+        "keyframes": [
+          {
+            "time": 0,
+            "value": 640,
+          },
+          {
+            "time": 0.14,
+            "value": 522,
+          },
+          {
+            "time": 0.22,
+            "value": 540,
+          },
+        ],
+        "layer_id": "\${steps.place-centered-title-layer.result.structuredContent.layerId}",
+        "motion_blur": true,
+        "property": "positionY",
+        "temporal_easing": {
+          "controlPoints": [
+            0.16,
+            1.2,
+            0.3,
+            1,
+          ],
+          "profile": "overshoot-settle",
+          "type": "cubic-bezier",
+        },
+        "time_mode": "normalized",
+      },
+      "id": "entrance-overshoot-keyframes",
+      "operation": "setKeyframes",
+      "precondition": "\${params.inOutStyle} == "rise"",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_set_keyframes",
+      "verify": {
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+    {
+      "args": {
+        "keyframes": [
+          {
+            "time": 0.82,
+            "value": {
+              "opacity": 100,
+              "positionY": 540,
+            },
+          },
+          {
+            "time": 1,
+            "value": {
+              "opacity": 0,
+              "positionY": 490,
+            },
+          },
+        ],
+        "layer_id": "\${steps.place-centered-title-layer.result.structuredContent.layerId}",
+        "motion_blur": true,
+        "property": "positionYOpacity",
+        "temporal_easing": {
+          "controlPoints": [
+            0.4,
+            0,
+            0.7,
+            1,
+          ],
+          "profile": "gentle-exit",
+          "type": "cubic-bezier",
+        },
+        "time_mode": "normalized",
+      },
+      "id": "rise-gentle-exit-keyframes",
+      "operation": "setKeyframes",
+      "precondition": "\${params.inOutStyle} == "rise"",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_set_keyframes",
+      "verify": {
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+    {
+      "args": {
+        "composition_id": "\${steps.build-title-composition.result.structuredContent.compId}",
+        "output_module": {
+          "bit_depth": 10,
+          "codec": "ProRes 422",
+          "color_space": "Rec.709 Gamma 2.4",
+          "format": "QuickTime",
+        },
+        "output_path": "/renders/title-card.mov",
+        "render_settings": {
+          "frameBlending": false,
+          "motionBlur": true,
+          "quality": "best",
+        },
+      },
+      "id": "queue-verified-title-render",
+      "note": "Render queue handoff verified: confirm the reported output path before supervised rendering.",
+      "operation": "queueRender",
+      "server": "aftereffects",
+      "timeoutMs": 30000,
+      "tool": "ae_queue_render",
+      "verify": {
+        "properties": {
+          "structuredContent": {
+            "properties": {
+              "outputPath": {
+                "type": "string",
+              },
+              "queued": {
+                "equals": true,
+                "type": "boolean",
+              },
+            },
+            "required": [
+              "queued",
+              "outputPath",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "structuredContent",
+        ],
+        "type": "object",
+      },
+    },
+  ],
+  "title": "Professional Title Card",
+}
+`;
