@@ -1,0 +1,260 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`CLI brain boundary > keeps conductor run --dry-run brain-free with no config access 1`] = `
+"{
+  "recipeId": "title-card",
+  "title": "Professional Title Card",
+  "params": {
+    "text": "Brain-free title",
+    "font": "Sans Serif",
+    "duration": 4,
+    "sizePreset": "medium",
+    "inOutStyle": "rise",
+    "outputPath": "/renders/brain-free.mov"
+  },
+  "steps": [
+    {
+      "id": "inspect-project-state",
+      "server": "aftereffects",
+      "operation": "projectInfo",
+      "tool": "ae_project_info",
+      "args": {
+        "action": "inspect",
+        "settings": {}
+      },
+      "timeoutMs": 30000,
+      "verify": {
+        "type": "object",
+        "required": [
+          "structuredContent"
+        ]
+      }
+    },
+    {
+      "id": "build-title-composition",
+      "server": "aftereffects",
+      "operation": "createComp",
+      "tool": "ae_create_composition",
+      "args": {
+        "name": "Conductor Title Card",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "pixel_aspect": 1,
+          "frame_rate": 24,
+          "duration_seconds": 4,
+          "background_color": "#101010"
+        }
+      },
+      "timeoutMs": 30000,
+      "verify": {
+        "type": "object",
+        "required": [
+          "structuredContent"
+        ],
+        "properties": {
+          "structuredContent": {
+            "type": "object",
+            "required": [
+              "compId"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "place-centered-title-layer",
+      "server": "aftereffects",
+      "operation": "addTextLayer",
+      "tool": "ae_add_text_layer",
+      "args": {
+        "composition_id": "\${steps.build-title-composition.result.structuredContent.compId}",
+        "layer": {
+          "name": "Primary Title",
+          "text": "Brain-free title",
+          "font": "Sans Serif",
+          "size_preset": "medium",
+          "alignment": "center",
+          "position": [
+            960,
+            540
+          ],
+          "color": "#F2F2F2",
+          "motion_blur": true
+        }
+      },
+      "timeoutMs": 30000,
+      "verify": {
+        "type": "object",
+        "required": [
+          "structuredContent"
+        ],
+        "properties": {
+          "structuredContent": {
+            "type": "object",
+            "required": [
+              "layerId"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "entrance-overshoot-keyframes",
+      "server": "aftereffects",
+      "operation": "setKeyframes",
+      "tool": "ae_set_keyframes",
+      "args": {
+        "layer_id": "\${steps.place-centered-title-layer.result.structuredContent.layerId}",
+        "property": "positionY",
+        "time_mode": "normalized",
+        "keyframes": [
+          {
+            "time": 0,
+            "value": 640
+          },
+          {
+            "time": 0.14,
+            "value": 522
+          },
+          {
+            "time": 0.22,
+            "value": 540
+          }
+        ],
+        "temporal_easing": {
+          "type": "cubic-bezier",
+          "profile": "overshoot-settle",
+          "controlPoints": [
+            0.16,
+            1.2,
+            0.3,
+            1
+          ]
+        },
+        "motion_blur": true
+      },
+      "timeoutMs": 30000,
+      "precondition": "\${params.inOutStyle} == \\"rise\\"",
+      "verify": {
+        "type": "object",
+        "required": [
+          "structuredContent"
+        ]
+      }
+    },
+    {
+      "id": "rise-gentle-exit-keyframes",
+      "server": "aftereffects",
+      "operation": "setKeyframes",
+      "tool": "ae_set_keyframes",
+      "args": {
+        "layer_id": "\${steps.place-centered-title-layer.result.structuredContent.layerId}",
+        "property": "positionYOpacity",
+        "time_mode": "normalized",
+        "keyframes": [
+          {
+            "time": 0.82,
+            "value": {
+              "positionY": 540,
+              "opacity": 100
+            }
+          },
+          {
+            "time": 1,
+            "value": {
+              "positionY": 490,
+              "opacity": 0
+            }
+          }
+        ],
+        "temporal_easing": {
+          "type": "cubic-bezier",
+          "profile": "gentle-exit",
+          "controlPoints": [
+            0.4,
+            0,
+            0.7,
+            1
+          ]
+        },
+        "motion_blur": true
+      },
+      "timeoutMs": 30000,
+      "precondition": "\${params.inOutStyle} == \\"rise\\"",
+      "verify": {
+        "type": "object",
+        "required": [
+          "structuredContent"
+        ]
+      }
+    },
+    {
+      "id": "queue-verified-title-render",
+      "server": "aftereffects",
+      "operation": "queueRender",
+      "tool": "ae_queue_render",
+      "args": {
+        "composition_id": "\${steps.build-title-composition.result.structuredContent.compId}",
+        "output_path": "/renders/brain-free.mov",
+        "output_module": {
+          "format": "QuickTime",
+          "codec": "ProRes 422",
+          "bit_depth": 10,
+          "color_space": "Rec.709 Gamma 2.4"
+        },
+        "render_settings": {
+          "quality": "best",
+          "motionBlur": true,
+          "frameBlending": false
+        }
+      },
+      "timeoutMs": 30000,
+      "verify": {
+        "type": "object",
+        "required": [
+          "structuredContent"
+        ],
+        "properties": {
+          "structuredContent": {
+            "type": "object",
+            "required": [
+              "queued",
+              "outputPath"
+            ],
+            "properties": {
+              "queued": {
+                "type": "boolean",
+                "equals": true
+              },
+              "outputPath": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "note": "Render queue handoff verified: confirm the reported output path before supervised rendering."
+    }
+  ]
+}
+"
+`;
+
+exports[`CLI brain boundary > prints a proposal but constructs no execution clients when confirmation is declined 1`] = `
+"Proposal:
+{
+  "recipe": "title-card",
+  "params": {
+    "text": "Mocked proposal",
+    "font": "Sans Serif",
+    "duration": 4,
+    "sizePreset": "medium",
+    "inOutStyle": "rise",
+    "outputPath": "/renders/mocked.mov"
+  },
+  "rationale": "The goal asks for a concise title."
+}
+Cancelled; no recipe was executed.
+"
+`;

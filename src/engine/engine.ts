@@ -19,6 +19,7 @@ import {
   serializeError,
   summarizeResult,
   type JournalStep,
+  type ProposalProvenance,
   type RunJournal,
 } from "./journal.js";
 import { evaluatePrecondition } from "./precondition.js";
@@ -36,6 +37,10 @@ export interface RunResult {
   runId: string;
   journalPath: string;
   outputs: Record<string, unknown>;
+}
+
+export interface RunOptions {
+  proposalProvenance?: ProposalProvenance;
 }
 
 function defaultRunId(recipeId: string, startedAt: Date): string {
@@ -91,6 +96,7 @@ export class RecipeEngine {
   public async run(
     recipeInput: unknown,
     suppliedParams: Record<string, unknown>,
+    options: RunOptions = {},
   ): Promise<RunResult> {
     const { recipe, params } = resolveRecipeParams(
       recipeInput,
@@ -111,6 +117,9 @@ export class RecipeEngine {
       startedAt: startedAt.toISOString(),
       finishedAt: startedAt.toISOString(),
       params,
+      ...(options.proposalProvenance === undefined
+        ? {}
+        : { proposalProvenance: options.proposalProvenance }),
       steps: journalSteps,
     };
 

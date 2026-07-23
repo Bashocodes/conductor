@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { z } from "zod";
 
 import { adapterConfigSchema } from "../adapters/config.js";
+import { brainConfigSchema } from "../brain/config.js";
 
 const stdioServerSchema = z
   .object({
@@ -31,6 +32,7 @@ export const serverConfigSchema = z.discriminatedUnion("transport", [
 export const conductorConfigSchema = z
   .object({
     servers: z.record(z.string().min(1), serverConfigSchema),
+    brain: brainConfigSchema.default({ type: "none" }),
   })
   .strict();
 

@@ -1,4 +1,7 @@
 {
+  "brain": {
+    "type": "none"
+  },
   "servers": {
     "aftereffects": {
       "transport": "stdio",

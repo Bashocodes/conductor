@@ -232,6 +232,43 @@ describe("reference recipe execution", () => {
     expect(journal.steps.at(-1)?.note).toContain("reel-hdr");
   });
 
+  it("journals proposal provenance without any credential field", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "conductor-provenance-"));
+    temporaryDirectories.push(directory);
+    const provider = new FakeAeClientProvider();
+    const engine = new RecipeEngine({
+      clientProvider: provider,
+      adapters: createFakeAdapterRegistry(),
+      journalWriter: new JournalWriter(directory),
+      createRunId: () => "run-with-proposal-provenance",
+    });
+
+    const result = await engine.run(
+      titleCardRecipe,
+      {
+        text: "Provenance test",
+        outputPath: "/renders/provenance.mov",
+      },
+      {
+        proposalProvenance: {
+          brainType: "api",
+          provider: "openai",
+          model: "proposal-test-model",
+        },
+      },
+    );
+    const journalSource = await readFile(result.journalPath, "utf8");
+    const journal = JSON.parse(journalSource) as RunJournal;
+
+    expect(journal.proposalProvenance).toEqual({
+      brainType: "api",
+      provider: "openai",
+      model: "proposal-test-model",
+    });
+    expect(journalSource).not.toContain("apiKey");
+    expect(journalSource).not.toContain("authorization");
+  });
+
   const verificationCases = [
     executionCases.find((testCase) => testCase.recipe.id === "title-card"),
     executionCases.find(

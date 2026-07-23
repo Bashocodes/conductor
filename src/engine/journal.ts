@@ -28,6 +28,12 @@ export interface JournalStep {
   error?: JournalError;
 }
 
+export interface ProposalProvenance {
+  brainType: "api" | "local";
+  model: string;
+  provider?: "openai" | "anthropic" | "gemini" | "openai-compatible";
+}
+
 export interface RunJournal {
   schemaVersion: 1;
   runId: string;
@@ -37,6 +43,7 @@ export interface RunJournal {
   startedAt: string;
   finishedAt: string;
   params: Record<string, unknown>;
+  proposalProvenance?: ProposalProvenance;
   steps: JournalStep[];
   error?: JournalError;
 }

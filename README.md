@@ -6,8 +6,11 @@ provide access to After Effects, Photoshop, Premiere, and similar tools;
 Conductor supplies the deterministic craft layer that decides which calls to
 make, in what order, with which easing and verification.
 
-Version 0.1 contains no AI. A recipe is validated data, runs sequentially, and
-produces a replayable JSON journal.
+The recipe engine contains no AI. A recipe is validated data, runs
+sequentially, and produces a replayable JSON journal. An optional pluggable
+brain may propose a registered recipe and schema-valid parameters, but it
+cannot create steps, connect to MCP, or execute a run. Brain mode defaults to
+`none` and remains optional.
 
 ## Requirements
 
@@ -34,6 +37,7 @@ node dist/cli.js recipes
 node dist/cli.js run title-card --dry-run \
   --param text="Hello from Conductor" \
   --param outputPath=/renders/title-card.mov
+node dist/cli.js ask "Create a restrained opening title" --brain api
 node dist/cli.js doctor
 ```
 
@@ -47,6 +51,13 @@ never loads config or connects to a server.
 
 Every real run writes `runs/<run-id>.json`, including resolved arguments,
 bounded result summaries, duration, skipped steps, and structured failures.
+Runs confirmed from an `ask` proposal also record only the brain type, provider,
+and model as provenance. Credentials are never journaled.
+
+`conductor run` is always brain-free. `conductor ask` prints a proposal before
+asking for confirmation; only the standard deterministic engine executes the
+confirmed recipe. Use `--yes` only when another trusted human-controlled
+workflow has already provided that confirmation.
 
 ## Recipes
 
@@ -86,3 +97,4 @@ Contributor documentation:
 
 - [Recipe anatomy and the three references](docs/RECIPES.md)
 - [Mapping your Adobe MCP server](docs/ADAPTERS.md)
+- [Optional proposal brains and credential setup](docs/BRAINS.md)

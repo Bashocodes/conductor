@@ -6,6 +6,8 @@ coverage/
 
 # Local configuration and secrets
 conductor.config.json
+.conductor/
+credentials.json
 .env
 .env.*
 !.env.example

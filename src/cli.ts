@@ -1,9 +1,15 @@
 #!/usr/bin/env node
 
 import { pathToFileURL } from "node:url";
+import { createInterface } from "node:readline/promises";
 
 import { Command, InvalidArgumentError } from "commander";
 
+import {
+  createBrain,
+  runAskFlow,
+  type BrainProposal,
+} from "./brain/index.js";
 import { createDryRunPlan, RecipeEngine } from "./engine/index.js";
 import { McpClientManager } from "./mcp/client.js";
 import {
@@ -17,6 +23,11 @@ import { createAdapterRegistryFromConfig } from "./adapters/registry.js";
 interface CliIo {
   stdout: Pick<NodeJS.WriteStream, "write">;
   stderr: Pick<NodeJS.WriteStream, "write">;
+}
+
+interface CliDependencies {
+  createBrain: typeof createBrain;
+  confirmExecution: () => Promise<boolean>;
 }
 
 function parseParamValue(value: string): unknown {
@@ -53,6 +64,40 @@ export function parseParamAssignments(
 
 function collectParam(value: string, previous: string[]): string[] {
   return [...previous, value];
+}
+
+function parseBrainOverride(value: string): "api" | "local" {
+  if (value === "api" || value === "local") return value;
+  throw new InvalidArgumentError("Brain must be 'api' or 'local'");
+}
+
+function printProposal(io: CliIo, proposal: BrainProposal): void {
+  io.stdout.write(
+    `Proposal:\n${JSON.stringify(
+      {
+        recipe: proposal.recipeId,
+        params: proposal.params,
+        rationale: proposal.rationale,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
+async function confirmExecution(): Promise<boolean> {
+  const prompt = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  try {
+    const answer = await prompt.question(
+      "Execute this deterministic recipe? [y/N] ",
+    );
+    return /^(?:y|yes)$/i.test(answer.trim());
+  } finally {
+    prompt.close();
+  }
 }
 
 function describeParam(definition: ParamDefinition): string {
@@ -95,6 +140,10 @@ function formatError(error: unknown): string {
 
 export function createProgram(
   io: CliIo = { stdout: process.stdout, stderr: process.stderr },
+  dependencies: CliDependencies = {
+    createBrain,
+    confirmExecution,
+  },
 ): Command {
   const program = new Command();
   program
@@ -180,8 +229,77 @@ export function createProgram(
     );
 
   program
+    .command("ask")
+    .description(
+      "Ask an optional brain to propose a recipe and parameters; execution requires confirmation",
+    )
+    .argument("<goal>", "motion-design goal in plain words")
+    .option(
+      "--brain <type>",
+      "override configured brain with api or local",
+      parseBrainOverride,
+    )
+    .option("--yes", "confirm the printed proposal non-interactively")
+    .action(
+      async (
+        userGoal: string,
+        options: { brain?: "api" | "local"; yes?: boolean },
+        command: Command,
+      ) => {
+        const globalOptions = command.optsWithGlobals<{
+          config: string;
+        }>();
+        const config = await loadConductorConfig(globalOptions.config);
+        const brain = await dependencies.createBrain({
+          config: config.brain,
+          ...(options.brain === undefined
+            ? {}
+            : { override: options.brain }),
+        });
+
+        const result = await runAskFlow({
+          userGoal,
+          brain,
+          recipes: listRecipes(),
+          onProposal: (proposal) => {
+            printProposal(io, proposal);
+          },
+          confirm:
+            options.yes === true
+              ? async () => true
+              : dependencies.confirmExecution,
+          execute: async ({ recipe, params, provenance }) => {
+            const clients = new McpClientManager(config);
+            const adapters = createAdapterRegistryFromConfig(config);
+            try {
+              return await new RecipeEngine({
+                clientProvider: clients,
+                adapters,
+              }).run(recipe, params, {
+                proposalProvenance: provenance,
+              });
+            } finally {
+              await clients.closeAll();
+            }
+          },
+        });
+
+        if (!result.confirmed) {
+          io.stdout.write("Cancelled; no recipe was executed.\n");
+          return;
+        }
+
+        io.stdout.write(
+          `Run ${result.execution.runId} completed.\nJournal: ${result.execution.journalPath}\n`,
+        );
+      },
+    );
+
+  program
     .command("doctor")
-    .description("Validate config, connect to each server, and list its tools")
+    .description(
+      "Validate config, servers, tools, and optional brain connectivity",
+    )
     .action(async (_options: unknown, command: Command) => {
       const globalOptions = command.optsWithGlobals<{
         config: string;
@@ -204,13 +322,29 @@ export function createProgram(
             io.stderr.write(`✗ ${serverName}: ${formatError(error)}\n`);
           }
         }
+
+        try {
+          const brain = await dependencies.createBrain({
+            config: config.brain,
+          });
+          const health = await brain.checkHealth();
+          if (health.ok) {
+            io.stdout.write(`✓ brain: ${health.message}\n`);
+          } else {
+            failures.push("brain");
+            io.stderr.write(`✗ brain: ${health.message}\n`);
+          }
+        } catch (error) {
+          failures.push("brain");
+          io.stderr.write(`✗ brain: ${formatError(error)}\n`);
+        }
       } finally {
         await clients.closeAll();
       }
 
       if (failures.length > 0) {
         throw new Error(
-          `Doctor found ${failures.length} unavailable server(s): ${failures.join(", ")}`,
+          `Doctor found ${failures.length} unavailable component(s): ${failures.join(", ")}`,
         );
       }
     });
