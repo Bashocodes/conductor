@@ -1,0 +1,48 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local configuration and secrets
+conductor.config.json
+.env
+.env.*
+!.env.example
+
+# Conductor run artifacts
+runs/
+
+# Logs and editor files
+*.log
+.idea/
+.vscode/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Motion-design source files and rendered media
+*.aep
+*.aepx
+*.prproj
+*.psd
+*.psb
+*.ai
+*.mp4
+*.mov
+*.m4v
+*.avi
+*.mkv
+*.webm
+*.wav
+*.mp3
+*.aac
+*.flac
+*.png
+*.jpg
+*.jpeg
+*.tif
+*.tiff
+*.exr

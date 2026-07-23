@@ -1,0 +1,13 @@
+{
+  "servers": {
+    "aftereffects": {
+      "transport": "stdio",
+      "command": "adb-mcp",
+      "args": ["aftereffects"]
+    },
+    "photoshop": {
+      "transport": "http",
+      "url": "http://127.0.0.1:3001/mcp"
+    }
+  }
+}
