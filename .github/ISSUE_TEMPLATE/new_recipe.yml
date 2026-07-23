@@ -1,0 +1,85 @@
+name: New recipe
+description: Propose deterministic motion-design craft for the recipe catalog.
+title: "[Recipe]: "
+labels:
+  - recipe
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Recipe contributions are Conductor's primary contribution path. Start with the professional outcome and craft logic; do not include brand assets, licensed fonts, private media, or server-specific tool code.
+  - type: input
+    id: recipe_id
+    attributes:
+      label: Proposed recipe ID
+      placeholder: lower-third
+    validations:
+      required: true
+  - type: dropdown
+    id: target
+    attributes:
+      label: Target application
+      options:
+        - After Effects
+        - Photoshop
+        - Premiere Pro
+        - Cross-application
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Professional outcome
+      description: What should the finished artifact do and where is it useful?
+    validations:
+      required: true
+  - type: textarea
+    id: params
+    attributes:
+      label: User-controlled parameters
+      description: List proposed names, types, defaults, and constraints.
+    validations:
+      required: true
+  - type: textarea
+    id: craft
+    attributes:
+      label: Craft logic
+      description: Explain timing, easing, motion blur, motivation, hierarchy, or technical bounds.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Intent-named step outline
+      description: List the deterministic checklist without concrete MCP tool names.
+    validations:
+      required: true
+  - type: textarea
+    id: render
+    attributes:
+      label: Export and verification
+      description: State the terminal export operation and expected result shape.
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: ToolContract operations
+      description: Which existing operations are needed? Explain any proposed addition.
+    validations:
+      required: true
+  - type: checkboxes
+    id: invariants
+    attributes:
+      label: Reference-recipe invariants
+      options:
+        - label: Every position or camera move will be explicitly eased.
+          required: true
+        - label: Every moving layer will enable motion blur.
+          required: true
+        - label: The recipe will end with an explicit verified export.
+          required: true
+        - label: Values and assets will remain generic and redistributable.
+          required: true
+        - label: Tests will run entirely against a fake server.
+          required: true

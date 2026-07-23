@@ -1,7 +1,26 @@
 {
   "name": "@conductor-motion/conductor",
-  "version": "0.1.0",
-  "description": "Deterministic, replayable motion-design recipes over MCP-enabled creative tools.",
+  "version": "0.1.0-alpha.0",
+  "description": "The deterministic craft layer for Adobe MCP servers.",
+  "private": true,
+  "license": "MIT",
+  "author": "KALAI LABS",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bashocodes/conductor.git"
+  },
+  "homepage": "https://github.com/Bashocodes/conductor#readme",
+  "bugs": {
+    "url": "https://github.com/Bashocodes/conductor/issues"
+  },
+  "keywords": [
+    "mcp",
+    "adobe",
+    "after-effects",
+    "motion-design",
+    "recipes",
+    "automation"
+  ],
   "type": "module",
   "bin": {
     "conductor": "./dist/cli.js"
@@ -16,7 +35,11 @@
     "dist",
     "docs",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md",
+    "SECURITY.md"
   ],
   "engines": {
     "node": ">=22"

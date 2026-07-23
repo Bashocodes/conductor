@@ -1,0 +1,66 @@
+name: Bug report
+description: Report reproducible incorrect behavior in Conductor.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, private media, client names, or sensitive paths. Security issues belong in a private security advisory.
+  - type: input
+    id: version
+    attributes:
+      label: Conductor version
+      description: Commit SHA or tag.
+      placeholder: v0.1.0-alpha
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Recipe schema or validation
+        - Dry-run
+        - Engine or journal
+        - MCP transport
+        - Adapter
+        - Brain proposal
+        - CLI or doctor
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Use generic parameters and the fake server when possible.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Add a dry-run excerpt, structured error, or redacted journal section.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed credentials, personal paths, private media, and client identifiers.
+          required: true
+        - label: I reproduced this without a live Adobe connection when possible.
+          required: true

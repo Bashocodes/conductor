@@ -151,7 +151,7 @@ export function createProgram(
     .description(
       "Run deterministic motion-design recipes over MCP-enabled creative tools.",
     )
-    .version("0.1.0")
+    .version("0.1.0-alpha.0")
     .option(
       "-c, --config <path>",
       "path to conductor.config.json",
