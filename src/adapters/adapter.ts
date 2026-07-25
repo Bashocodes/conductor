@@ -1,7 +1,7 @@
 import type { JsonValue } from "../schema/json.js";
 import {
-  adapterConfigSchema,
-  type AdapterConfig,
+  declarativeAdapterConfigSchema,
+  type DeclarativeAdapterConfig,
 } from "./config.js";
 import {
   parseToolArgs,
@@ -38,6 +38,21 @@ export interface MappedToolCall {
 
 export interface MapCallOptions {
   allowUnresolvedReferences?: boolean;
+}
+
+/**
+ * What the engine needs from an adapter, whichever shape the server takes:
+ * turn a ToolContract operation and its arguments into one concrete tool call.
+ */
+export interface ToolAdapter {
+  readonly serverName: string;
+  readonly id: string;
+  readonly label: string;
+  mapCall(
+    operation: ToolOperation,
+    args: Record<string, JsonValue>,
+    options?: MapCallOptions,
+  ): MappedToolCall;
 }
 
 const omitted = Symbol("omitted");
@@ -110,12 +125,12 @@ function applyTemplate(
   return template;
 }
 
-export class DeclarativeToolAdapter {
+export class DeclarativeToolAdapter implements ToolAdapter {
   public readonly serverName: string;
-  public readonly config: AdapterConfig;
+  public readonly config: DeclarativeAdapterConfig;
 
   public constructor(serverName: string, configInput: unknown) {
-    const parsed = adapterConfigSchema.safeParse(configInput);
+    const parsed = declarativeAdapterConfigSchema.safeParse(configInput);
     if (!parsed.success) {
       throw new AdapterError(
         "ADAPTER_INVALID",
@@ -126,6 +141,14 @@ export class DeclarativeToolAdapter {
 
     this.serverName = serverName;
     this.config = parsed.data;
+  }
+
+  public get id(): string {
+    return this.config.id;
+  }
+
+  public get label(): string {
+    return this.config.label;
   }
 
   public mapCall(

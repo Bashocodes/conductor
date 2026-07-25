@@ -11,8 +11,11 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
   "steps": [
     {
       "args": {
+        "script_string": "/* projectInfo: rendered at run time */",
+      },
+      "contractArgs": {
         "action": "inspect",
-        "media_path": "/media/source.mov",
+        "mediaPath": "/media/source.mov",
         "settings": {
           "includeColorMetadata": true,
           "includeFrameRateAndDuration": true,
@@ -22,7 +25,7 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
       "operation": "projectInfo",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_project_info",
+      "tool": "execute_extend_script",
       "verify": {
         "properties": {
           "structuredContent": {
@@ -43,6 +46,9 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
     },
     {
       "args": {
+        "script_string": "/* projectInfo: rendered at run time */",
+      },
+      "contractArgs": {
         "action": "configure",
         "settings": {
           "bitDepth": 32,
@@ -57,7 +63,7 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
       "operation": "projectInfo",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_project_info",
+      "tool": "execute_extend_script",
       "verify": {
         "required": [
           "structuredContent",
@@ -67,21 +73,22 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
     },
     {
       "args": {
+        "script_string": "/* createComp: rendered at run time */",
+      },
+      "contractArgs": {
+        "backgroundColor": "#000000",
+        "durationSeconds": "\${steps.inspect-source-metadata.result.structuredContent.durationSeconds}",
+        "frameRate": "\${steps.inspect-source-metadata.result.structuredContent.frameRate}",
+        "height": "\${steps.inspect-source-metadata.result.structuredContent.height}",
         "name": "Conductor HLG Technical Master",
-        "settings": {
-          "background_color": "#000000",
-          "duration_seconds": "\${steps.inspect-source-metadata.result.structuredContent.durationSeconds}",
-          "frame_rate": "\${steps.inspect-source-metadata.result.structuredContent.frameRate}",
-          "height": "\${steps.inspect-source-metadata.result.structuredContent.height}",
-          "pixel_aspect": 1,
-          "width": "\${steps.inspect-source-metadata.result.structuredContent.width}",
-        },
+        "pixelAspect": 1,
+        "width": "\${steps.inspect-source-metadata.result.structuredContent.width}",
       },
       "id": "build-source-matched-composition",
       "operation": "createComp",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_create_composition",
+      "tool": "execute_extend_script",
       "verify": {
         "properties": {
           "structuredContent": {
@@ -99,10 +106,13 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
     },
     {
       "args": {
-        "collapse_transformations": false,
-        "composition_id": "\${steps.build-source-matched-composition.result.structuredContent.compId}",
-        "layer_ids": [],
-        "motion_blur": false,
+        "script_string": "/* precompose: rendered at run time */",
+      },
+      "contractArgs": {
+        "collapseTransformations": false,
+        "compId": "\${steps.build-source-matched-composition.result.structuredContent.compId}",
+        "layerIds": [],
+        "motionBlur": false,
         "name": "Source Technical Grade",
         "sources": [
           {
@@ -116,7 +126,7 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
       "operation": "precompose",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_precompose",
+      "tool": "execute_extend_script",
       "verify": {
         "properties": {
           "structuredContent": {
@@ -134,8 +144,13 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
     },
     {
       "args": {
-        "effect_name": "Exposure",
-        "parameters": {
+        "script_string": "/* applyEffect: rendered at run time */",
+      },
+      "contractArgs": {
+        "atTimeSeconds": 0,
+        "durationSeconds": "\${steps.inspect-source-metadata.result.structuredContent.durationSeconds}",
+        "effect": "Exposure",
+        "settings": {
           "allowedAdjustmentStops": [
             -1,
             1,
@@ -145,17 +160,13 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
           "gammaCorrection": 1,
           "offset": 0,
         },
-        "target_id": "\${steps.prepare-source-for-technical-grade.result.structuredContent.layerId}",
-        "timing": {
-          "at_seconds": 0,
-          "duration_seconds": "\${steps.inspect-source-metadata.result.structuredContent.durationSeconds}",
-        },
+        "targetId": "\${steps.prepare-source-for-technical-grade.result.structuredContent.layerId}",
       },
       "id": "bounded-exposure-normalization",
       "operation": "applyEffect",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_apply_effect",
+      "tool": "execute_extend_script",
       "verify": {
         "required": [
           "structuredContent",
@@ -165,8 +176,13 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
     },
     {
       "args": {
-        "effect_name": "Levels",
-        "parameters": {
+        "script_string": "/* applyEffect: rendered at run time */",
+      },
+      "contractArgs": {
+        "atTimeSeconds": 0,
+        "durationSeconds": "\${steps.inspect-source-metadata.result.structuredContent.durationSeconds}",
+        "effect": "Levels",
+        "settings": {
           "clampSuperBlack": true,
           "clampSuperWhite": true,
           "creativeLook": false,
@@ -176,17 +192,13 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
           "outputBlack": 0,
           "outputWhite": 0.98,
         },
-        "target_id": "\${steps.prepare-source-for-technical-grade.result.structuredContent.layerId}",
-        "timing": {
-          "at_seconds": 0,
-          "duration_seconds": "\${steps.inspect-source-metadata.result.structuredContent.durationSeconds}",
-        },
+        "targetId": "\${steps.prepare-source-for-technical-grade.result.structuredContent.layerId}",
       },
       "id": "broadcast-safe-levels-clamp",
       "operation": "applyEffect",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_apply_effect",
+      "tool": "execute_extend_script",
       "verify": {
         "required": [
           "structuredContent",
@@ -196,6 +208,9 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
     },
     {
       "args": {
+        "script_string": "/* projectInfo: rendered at run time */",
+      },
+      "contractArgs": {
         "action": "configure",
         "settings": {
           "creativeLook": false,
@@ -210,7 +225,7 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
       "operation": "projectInfo",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_project_info",
+      "tool": "execute_extend_script",
       "verify": {
         "required": [
           "structuredContent",
@@ -220,15 +235,16 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
     },
     {
       "args": {
-        "composition_id": "\${steps.build-source-matched-composition.result.structuredContent.compId}",
-        "output_module": {
-          "bit_depth": 10,
-          "codec": "ProRes 422 HQ",
-          "color_space": "Rec.2100 HLG",
-          "format": "QuickTime",
-        },
-        "output_path": "/renders/hlg-master.mov",
-        "render_settings": {
+        "script_string": "/* queueRender: rendered at run time */",
+      },
+      "contractArgs": {
+        "bitDepth": 10,
+        "codec": "ProRes 422 HQ",
+        "colorSpace": "Rec.2100 HLG",
+        "compId": "\${steps.build-source-matched-composition.result.structuredContent.compId}",
+        "format": "QuickTime",
+        "outputPath": "/renders/hlg-master.mov",
+        "renderSettings": {
           "alpha": false,
           "colorManagement": "preserve-hlg",
           "quality": "best",
@@ -240,7 +256,7 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
       "operation": "queueRender",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_queue_render",
+      "tool": "execute_extend_script",
       "verify": {
         "properties": {
           "structuredContent": {
@@ -283,6 +299,9 @@ exports[`reference recipe dry runs > snapshots the motivated-transition checklis
   "steps": [
     {
       "args": {
+        "script_string": "/* projectInfo: rendered at run time */",
+      },
+      "contractArgs": {
         "action": "inspect",
         "settings": {},
       },
@@ -290,7 +309,7 @@ exports[`reference recipe dry runs > snapshots the motivated-transition checklis
       "operation": "projectInfo",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_project_info",
+      "tool": "execute_extend_script",
       "verify": {
         "required": [
           "structuredContent",
@@ -300,21 +319,22 @@ exports[`reference recipe dry runs > snapshots the motivated-transition checklis
     },
     {
       "args": {
+        "script_string": "/* createComp: rendered at run time */",
+      },
+      "contractArgs": {
+        "backgroundColor": "#000000",
+        "durationSeconds": 6,
+        "frameRate": 24,
+        "height": 1080,
         "name": "Conductor Motivated Transition",
-        "settings": {
-          "background_color": "#000000",
-          "duration_seconds": 6,
-          "frame_rate": 24,
-          "height": 1080,
-          "pixel_aspect": 1,
-          "width": 1920,
-        },
+        "pixelAspect": 1,
+        "width": 1920,
       },
       "id": "build-transition-composition",
       "operation": "createComp",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_create_composition",
+      "tool": "execute_extend_script",
       "verify": {
         "properties": {
           "structuredContent": {
@@ -332,10 +352,13 @@ exports[`reference recipe dry runs > snapshots the motivated-transition checklis
     },
     {
       "args": {
-        "collapse_transformations": false,
-        "composition_id": "\${steps.build-transition-composition.result.structuredContent.compId}",
-        "layer_ids": [],
-        "motion_blur": true,
+        "script_string": "/* precompose: rendered at run time */",
+      },
+      "contractArgs": {
+        "collapseTransformations": false,
+        "compId": "\${steps.build-transition-composition.result.structuredContent.compId}",
+        "layerIds": [],
+        "motionBlur": true,
         "name": "Outgoing Clip",
         "sources": [
           {
@@ -349,7 +372,7 @@ exports[`reference recipe dry runs > snapshots the motivated-transition checklis
       "operation": "precompose",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_precompose",
+      "tool": "execute_extend_script",
       "verify": {
         "properties": {
           "structuredContent": {
@@ -367,10 +390,13 @@ exports[`reference recipe dry runs > snapshots the motivated-transition checklis
     },
     {
       "args": {
-        "collapse_transformations": false,
-        "composition_id": "\${steps.build-transition-composition.result.structuredContent.compId}",
-        "layer_ids": [],
-        "motion_blur": true,
+        "script_string": "/* precompose: rendered at run time */",
+      },
+      "contractArgs": {
+        "collapseTransformations": false,
+        "compId": "\${steps.build-transition-composition.result.structuredContent.compId}",
+        "layerIds": [],
+        "motionBlur": true,
         "name": "Incoming Clip",
         "sources": [
           {
@@ -384,7 +410,7 @@ exports[`reference recipe dry runs > snapshots the motivated-transition checklis
       "operation": "precompose",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_precompose",
+      "tool": "execute_extend_script",
       "verify": {
         "properties": {
           "structuredContent": {
@@ -402,25 +428,26 @@ exports[`reference recipe dry runs > snapshots the motivated-transition checklis
     },
     {
       "args": {
-        "effect_name": "Directional Luma Matte",
-        "parameters": {
+        "script_string": "/* applyEffect: rendered at run time */",
+      },
+      "contractArgs": {
+        "atTimeSeconds": 2.5,
+        "durationSeconds": 1,
+        "effect": "Directional Luma Matte",
+        "settings": {
           "directionDegrees": 0,
           "featherPixels": 140,
           "source": "procedural-ramp",
           "travelDirection": "left-to-right",
         },
-        "target_id": "\${steps.prepare-incoming-clip.result.structuredContent.layerId}",
-        "timing": {
-          "at_seconds": 2.5,
-          "duration_seconds": 1,
-        },
+        "targetId": "\${steps.prepare-incoming-clip.result.structuredContent.layerId}",
       },
       "id": "directional-luma-matte",
       "operation": "applyEffect",
       "precondition": "\${params.style} == "luma-wipe"",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_apply_effect",
+      "tool": "execute_extend_script",
       "verify": {
         "properties": {
           "structuredContent": {
@@ -438,6 +465,19 @@ exports[`reference recipe dry runs > snapshots the motivated-transition checklis
     },
     {
       "args": {
+        "script_string": "/* setKeyframes: rendered at run time */",
+      },
+      "contractArgs": {
+        "easing": {
+          "controlPoints": [
+            0.25,
+            0.1,
+            0.25,
+            1,
+          ],
+          "profile": "directional-wipe",
+          "type": "cubic-bezier",
+        },
         "keyframes": [
           {
             "time": 2.55,
@@ -448,27 +488,17 @@ exports[`reference recipe dry runs > snapshots the motivated-transition checklis
             "value": 100,
           },
         ],
-        "layer_id": "\${steps.directional-luma-matte.result.structuredContent.effectId}",
-        "motion_blur": false,
+        "layerId": "\${steps.directional-luma-matte.result.structuredContent.effectId}",
+        "motionBlur": false,
         "property": "progress",
-        "temporal_easing": {
-          "controlPoints": [
-            0.25,
-            0.1,
-            0.25,
-            1,
-          ],
-          "profile": "directional-wipe",
-          "type": "cubic-bezier",
-        },
-        "time_mode": "seconds",
+        "timeMode": "seconds",
       },
       "id": "luma-wipe-directional-progress",
       "operation": "setKeyframes",
       "precondition": "\${params.style} == "luma-wipe"",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_set_keyframes",
+      "tool": "execute_extend_script",
       "verify": {
         "required": [
           "structuredContent",
@@ -478,15 +508,16 @@ exports[`reference recipe dry runs > snapshots the motivated-transition checklis
     },
     {
       "args": {
-        "composition_id": "\${steps.build-transition-composition.result.structuredContent.compId}",
-        "output_module": {
-          "bit_depth": 10,
-          "codec": "ProRes 422",
-          "color_space": "Rec.709 Gamma 2.4",
-          "format": "QuickTime",
-        },
-        "output_path": "/renders/motivated-transition.mov",
-        "render_settings": {
+        "script_string": "/* queueRender: rendered at run time */",
+      },
+      "contractArgs": {
+        "bitDepth": 10,
+        "codec": "ProRes 422",
+        "colorSpace": "Rec.709 Gamma 2.4",
+        "compId": "\${steps.build-transition-composition.result.structuredContent.compId}",
+        "format": "QuickTime",
+        "outputPath": "/renders/motivated-transition.mov",
+        "renderSettings": {
           "frameBlending": true,
           "motionBlur": true,
           "quality": "best",
@@ -497,7 +528,7 @@ exports[`reference recipe dry runs > snapshots the motivated-transition checklis
       "operation": "queueRender",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_queue_render",
+      "tool": "execute_extend_script",
       "verify": {
         "properties": {
           "structuredContent": {
@@ -542,6 +573,9 @@ exports[`reference recipe dry runs > snapshots the title-card checklist 1`] = `
   "steps": [
     {
       "args": {
+        "script_string": "/* projectInfo: rendered at run time */",
+      },
+      "contractArgs": {
         "action": "inspect",
         "settings": {},
       },
@@ -549,7 +583,7 @@ exports[`reference recipe dry runs > snapshots the title-card checklist 1`] = `
       "operation": "projectInfo",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_project_info",
+      "tool": "execute_extend_script",
       "verify": {
         "required": [
           "structuredContent",
@@ -559,21 +593,22 @@ exports[`reference recipe dry runs > snapshots the title-card checklist 1`] = `
     },
     {
       "args": {
+        "script_string": "/* createComp: rendered at run time */",
+      },
+      "contractArgs": {
+        "backgroundColor": "#101010",
+        "durationSeconds": 4,
+        "frameRate": 24,
+        "height": 1080,
         "name": "Conductor Title Card",
-        "settings": {
-          "background_color": "#101010",
-          "duration_seconds": 4,
-          "frame_rate": 24,
-          "height": 1080,
-          "pixel_aspect": 1,
-          "width": 1920,
-        },
+        "pixelAspect": 1,
+        "width": 1920,
       },
       "id": "build-title-composition",
       "operation": "createComp",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_create_composition",
+      "tool": "execute_extend_script",
       "verify": {
         "properties": {
           "structuredContent": {
@@ -591,26 +626,27 @@ exports[`reference recipe dry runs > snapshots the title-card checklist 1`] = `
     },
     {
       "args": {
-        "composition_id": "\${steps.build-title-composition.result.structuredContent.compId}",
-        "layer": {
-          "alignment": "center",
-          "color": "#F2F2F2",
-          "font": "Sans Serif",
-          "motion_blur": true,
-          "name": "Primary Title",
-          "position": [
-            960,
-            540,
-          ],
-          "size_preset": "medium",
-          "text": "Reference Title",
-        },
+        "script_string": "/* addTextLayer: rendered at run time */",
+      },
+      "contractArgs": {
+        "alignment": "center",
+        "color": "#F2F2F2",
+        "compId": "\${steps.build-title-composition.result.structuredContent.compId}",
+        "font": "Sans Serif",
+        "motionBlur": true,
+        "name": "Primary Title",
+        "position": [
+          960,
+          540,
+        ],
+        "sizePreset": "medium",
+        "text": "Reference Title",
       },
       "id": "place-centered-title-layer",
       "operation": "addTextLayer",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_add_text_layer",
+      "tool": "execute_extend_script",
       "verify": {
         "properties": {
           "structuredContent": {
@@ -628,6 +664,19 @@ exports[`reference recipe dry runs > snapshots the title-card checklist 1`] = `
     },
     {
       "args": {
+        "script_string": "/* setKeyframes: rendered at run time */",
+      },
+      "contractArgs": {
+        "easing": {
+          "controlPoints": [
+            0.16,
+            1.2,
+            0.3,
+            1,
+          ],
+          "profile": "overshoot-settle",
+          "type": "cubic-bezier",
+        },
         "keyframes": [
           {
             "time": 0,
@@ -642,27 +691,17 @@ exports[`reference recipe dry runs > snapshots the title-card checklist 1`] = `
             "value": 540,
           },
         ],
-        "layer_id": "\${steps.place-centered-title-layer.result.structuredContent.layerId}",
-        "motion_blur": true,
+        "layerId": "\${steps.place-centered-title-layer.result.structuredContent.layerId}",
+        "motionBlur": true,
         "property": "positionY",
-        "temporal_easing": {
-          "controlPoints": [
-            0.16,
-            1.2,
-            0.3,
-            1,
-          ],
-          "profile": "overshoot-settle",
-          "type": "cubic-bezier",
-        },
-        "time_mode": "normalized",
+        "timeMode": "normalized",
       },
       "id": "entrance-overshoot-keyframes",
       "operation": "setKeyframes",
       "precondition": "\${params.inOutStyle} == "rise"",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_set_keyframes",
+      "tool": "execute_extend_script",
       "verify": {
         "required": [
           "structuredContent",
@@ -672,6 +711,19 @@ exports[`reference recipe dry runs > snapshots the title-card checklist 1`] = `
     },
     {
       "args": {
+        "script_string": "/* setKeyframes: rendered at run time */",
+      },
+      "contractArgs": {
+        "easing": {
+          "controlPoints": [
+            0.4,
+            0,
+            0.7,
+            1,
+          ],
+          "profile": "gentle-exit",
+          "type": "cubic-bezier",
+        },
         "keyframes": [
           {
             "time": 0.82,
@@ -688,27 +740,17 @@ exports[`reference recipe dry runs > snapshots the title-card checklist 1`] = `
             },
           },
         ],
-        "layer_id": "\${steps.place-centered-title-layer.result.structuredContent.layerId}",
-        "motion_blur": true,
+        "layerId": "\${steps.place-centered-title-layer.result.structuredContent.layerId}",
+        "motionBlur": true,
         "property": "positionYOpacity",
-        "temporal_easing": {
-          "controlPoints": [
-            0.4,
-            0,
-            0.7,
-            1,
-          ],
-          "profile": "gentle-exit",
-          "type": "cubic-bezier",
-        },
-        "time_mode": "normalized",
+        "timeMode": "normalized",
       },
       "id": "rise-gentle-exit-keyframes",
       "operation": "setKeyframes",
       "precondition": "\${params.inOutStyle} == "rise"",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_set_keyframes",
+      "tool": "execute_extend_script",
       "verify": {
         "required": [
           "structuredContent",
@@ -718,15 +760,16 @@ exports[`reference recipe dry runs > snapshots the title-card checklist 1`] = `
     },
     {
       "args": {
-        "composition_id": "\${steps.build-title-composition.result.structuredContent.compId}",
-        "output_module": {
-          "bit_depth": 10,
-          "codec": "ProRes 422",
-          "color_space": "Rec.709 Gamma 2.4",
-          "format": "QuickTime",
-        },
-        "output_path": "/renders/title-card.mov",
-        "render_settings": {
+        "script_string": "/* queueRender: rendered at run time */",
+      },
+      "contractArgs": {
+        "bitDepth": 10,
+        "codec": "ProRes 422",
+        "colorSpace": "Rec.709 Gamma 2.4",
+        "compId": "\${steps.build-title-composition.result.structuredContent.compId}",
+        "format": "QuickTime",
+        "outputPath": "/renders/title-card.mov",
+        "renderSettings": {
           "frameBlending": false,
           "motionBlur": true,
           "quality": "best",
@@ -737,7 +780,7 @@ exports[`reference recipe dry runs > snapshots the title-card checklist 1`] = `
       "operation": "queueRender",
       "server": "aftereffects",
       "timeoutMs": 30000,
-      "tool": "ae_queue_render",
+      "tool": "execute_extend_script",
       "verify": {
         "properties": {
           "structuredContent": {

@@ -22,6 +22,7 @@ import {
   type ProposalProvenance,
   type RunJournal,
 } from "./journal.js";
+import { normalizeToolResult } from "./normalizeResult.js";
 import { evaluatePrecondition } from "./precondition.js";
 import { verifyExpectedShape } from "./verify.js";
 
@@ -156,12 +157,16 @@ export class RecipeEngine {
           mappedTool = mapped.tool;
           mappedArgs = mapped.args;
           const connection = await this.#clientProvider.get(step.server);
-          const result = await withTimeout(
+          const rawResult = await withTimeout(
             connection.callTool(mapped.tool, mapped.args, step.timeoutMs),
             step.timeoutMs,
             step.server,
             mapped.tool,
           );
+          // Servers that answer with a JSON text block instead of
+          // structuredContent get the same shape as everyone else, so recipes
+          // stay portable across server implementations.
+          const result = normalizeToolResult(rawResult);
 
           if (step.verify !== undefined) {
             verifyExpectedShape(result, step.verify);

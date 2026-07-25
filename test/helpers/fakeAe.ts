@@ -25,7 +25,12 @@ export class FakeAeServer implements McpServerConnection {
   #effectCount = 0;
 
   public async listTools(): Promise<DiscoveredTool[]> {
-    return Object.values(fakeServerAdapterConfig.operations).map((mapping) => ({
+    // The fake mirrors a granular-tool server, so it always has an operations map.
+    const operations =
+      fakeServerAdapterConfig.kind === "declarative"
+        ? fakeServerAdapterConfig.operations
+        : {};
+    return Object.values(operations).map((mapping) => ({
       name: mapping.tool,
       inputSchema: { type: "object" },
     }));

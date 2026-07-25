@@ -17,6 +17,14 @@ export interface DryRunStep {
   id: string;
   server: string;
   operation: ToolOperation;
+  /**
+   * What Conductor intends, in ToolContract terms. This is the readable half of
+   * the plan and is identical whatever server you point at — a script adapter
+   * cannot show meaningful `args`, because its arguments are a program rendered
+   * at run time from these values.
+   */
+  contractArgs: Record<string, JsonValue>;
+  /** How it reaches this particular server. */
   tool: string;
   args: Record<string, JsonValue>;
   timeoutMs: number;
@@ -96,6 +104,7 @@ export function createDryRunPlan(
       id: step.id,
       server: step.server,
       operation: step.operation,
+      contractArgs,
       tool: mapped.tool,
       args: mapped.args,
       timeoutMs: step.timeoutMs,

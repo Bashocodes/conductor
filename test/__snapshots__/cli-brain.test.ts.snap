@@ -17,10 +17,13 @@ exports[`CLI brain boundary > keeps conductor run --dry-run brain-free with no c
       "id": "inspect-project-state",
       "server": "aftereffects",
       "operation": "projectInfo",
-      "tool": "ae_project_info",
-      "args": {
+      "contractArgs": {
         "action": "inspect",
         "settings": {}
+      },
+      "tool": "execute_extend_script",
+      "args": {
+        "script_string": "/* projectInfo: rendered at run time */"
       },
       "timeoutMs": 30000,
       "verify": {
@@ -34,17 +37,18 @@ exports[`CLI brain boundary > keeps conductor run --dry-run brain-free with no c
       "id": "build-title-composition",
       "server": "aftereffects",
       "operation": "createComp",
-      "tool": "ae_create_composition",
-      "args": {
+      "contractArgs": {
         "name": "Conductor Title Card",
-        "settings": {
-          "width": 1920,
-          "height": 1080,
-          "pixel_aspect": 1,
-          "frame_rate": 24,
-          "duration_seconds": 4,
-          "background_color": "#101010"
-        }
+        "width": 1920,
+        "height": 1080,
+        "pixelAspect": 1,
+        "frameRate": 24,
+        "durationSeconds": 4,
+        "backgroundColor": "#101010"
+      },
+      "tool": "execute_extend_script",
+      "args": {
+        "script_string": "/* createComp: rendered at run time */"
       },
       "timeoutMs": 30000,
       "verify": {
@@ -66,22 +70,23 @@ exports[`CLI brain boundary > keeps conductor run --dry-run brain-free with no c
       "id": "place-centered-title-layer",
       "server": "aftereffects",
       "operation": "addTextLayer",
-      "tool": "ae_add_text_layer",
+      "contractArgs": {
+        "compId": "\${steps.build-title-composition.result.structuredContent.compId}",
+        "name": "Primary Title",
+        "text": "Brain-free title",
+        "font": "Sans Serif",
+        "sizePreset": "medium",
+        "alignment": "center",
+        "position": [
+          960,
+          540
+        ],
+        "color": "#F2F2F2",
+        "motionBlur": true
+      },
+      "tool": "execute_extend_script",
       "args": {
-        "composition_id": "\${steps.build-title-composition.result.structuredContent.compId}",
-        "layer": {
-          "name": "Primary Title",
-          "text": "Brain-free title",
-          "font": "Sans Serif",
-          "size_preset": "medium",
-          "alignment": "center",
-          "position": [
-            960,
-            540
-          ],
-          "color": "#F2F2F2",
-          "motion_blur": true
-        }
+        "script_string": "/* addTextLayer: rendered at run time */"
       },
       "timeoutMs": 30000,
       "verify": {
@@ -103,11 +108,10 @@ exports[`CLI brain boundary > keeps conductor run --dry-run brain-free with no c
       "id": "entrance-overshoot-keyframes",
       "server": "aftereffects",
       "operation": "setKeyframes",
-      "tool": "ae_set_keyframes",
-      "args": {
-        "layer_id": "\${steps.place-centered-title-layer.result.structuredContent.layerId}",
+      "contractArgs": {
+        "layerId": "\${steps.place-centered-title-layer.result.structuredContent.layerId}",
         "property": "positionY",
-        "time_mode": "normalized",
+        "timeMode": "normalized",
         "keyframes": [
           {
             "time": 0,
@@ -122,7 +126,7 @@ exports[`CLI brain boundary > keeps conductor run --dry-run brain-free with no c
             "value": 540
           }
         ],
-        "temporal_easing": {
+        "easing": {
           "type": "cubic-bezier",
           "profile": "overshoot-settle",
           "controlPoints": [
@@ -132,7 +136,11 @@ exports[`CLI brain boundary > keeps conductor run --dry-run brain-free with no c
             1
           ]
         },
-        "motion_blur": true
+        "motionBlur": true
+      },
+      "tool": "execute_extend_script",
+      "args": {
+        "script_string": "/* setKeyframes: rendered at run time */"
       },
       "timeoutMs": 30000,
       "precondition": "\${params.inOutStyle} == \\"rise\\"",
@@ -147,11 +155,10 @@ exports[`CLI brain boundary > keeps conductor run --dry-run brain-free with no c
       "id": "rise-gentle-exit-keyframes",
       "server": "aftereffects",
       "operation": "setKeyframes",
-      "tool": "ae_set_keyframes",
-      "args": {
-        "layer_id": "\${steps.place-centered-title-layer.result.structuredContent.layerId}",
+      "contractArgs": {
+        "layerId": "\${steps.place-centered-title-layer.result.structuredContent.layerId}",
         "property": "positionYOpacity",
-        "time_mode": "normalized",
+        "timeMode": "normalized",
         "keyframes": [
           {
             "time": 0.82,
@@ -168,7 +175,7 @@ exports[`CLI brain boundary > keeps conductor run --dry-run brain-free with no c
             }
           }
         ],
-        "temporal_easing": {
+        "easing": {
           "type": "cubic-bezier",
           "profile": "gentle-exit",
           "controlPoints": [
@@ -178,7 +185,11 @@ exports[`CLI brain boundary > keeps conductor run --dry-run brain-free with no c
             1
           ]
         },
-        "motion_blur": true
+        "motionBlur": true
+      },
+      "tool": "execute_extend_script",
+      "args": {
+        "script_string": "/* setKeyframes: rendered at run time */"
       },
       "timeoutMs": 30000,
       "precondition": "\${params.inOutStyle} == \\"rise\\"",
@@ -193,21 +204,22 @@ exports[`CLI brain boundary > keeps conductor run --dry-run brain-free with no c
       "id": "queue-verified-title-render",
       "server": "aftereffects",
       "operation": "queueRender",
-      "tool": "ae_queue_render",
-      "args": {
-        "composition_id": "\${steps.build-title-composition.result.structuredContent.compId}",
-        "output_path": "/renders/brain-free.mov",
-        "output_module": {
-          "format": "QuickTime",
-          "codec": "ProRes 422",
-          "bit_depth": 10,
-          "color_space": "Rec.709 Gamma 2.4"
-        },
-        "render_settings": {
+      "contractArgs": {
+        "compId": "\${steps.build-title-composition.result.structuredContent.compId}",
+        "outputPath": "/renders/brain-free.mov",
+        "format": "QuickTime",
+        "codec": "ProRes 422",
+        "bitDepth": 10,
+        "colorSpace": "Rec.709 Gamma 2.4",
+        "renderSettings": {
           "quality": "best",
           "motionBlur": true,
           "frameBlending": false
         }
+      },
+      "tool": "execute_extend_script",
+      "args": {
+        "script_string": "/* queueRender: rendered at run time */"
       },
       "timeoutMs": 30000,
       "verify": {
