@@ -136,32 +136,24 @@ function renderSetKeyframes(args: ToolArgs<"setKeyframes">): string {
   comp.motionBlur = true;
   layer.motionBlur = ${args.motionBlur ? "true" : "false"};
 
-  var prop = cdProperty(layer, ${es3Literal(args.property)});
-  var times = ${es3Literal(times)};
+  var rawTimes = ${es3Literal(times)};
   var values = ${es3Literal(values as JsonValue[])};
   var mode = ${es3Literal(args.timeMode)};
   var span = comp.duration;
 
-  var i;
-  for (i = 0; i < times.length; i++) {
-    var t = (mode === "normalized") ? (times[i] * span) : times[i];
-    prop.setValueAtTime(t, values[i]);
+  // Normalized time lets a recipe describe a shape that holds at any duration.
+  var times = [];
+  for (var i = 0; i < rawTimes.length; i++) {
+    times.push((mode === "normalized") ? (rawTimes[i] * span) : rawTimes[i]);
   }
 
-  // Ease every keyframe. Speed 0 makes the value arrive and leave at rest, so
-  // the move settles instead of stopping dead; the influences carry the shape
-  // of the requested curve. Linear keyframes are the loudest amateur tell, so
-  // this loop is not optional and has no opt-out.
-  var last = prop.numKeys;
-  for (i = 1; i <= last; i++) {
-    prop.setInterpolationTypeAtKey(i, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);
-    prop.setTemporalEaseAtKey(
-      i,
-      cdEase(prop, 0, ${inInfluence}),
-      cdEase(prop, 0, ${outInfluence})
-    );
-  }
-  return { applied: true, keyCount: prop.numKeys, property: ${es3Literal(args.property)}, layerId: String(layer.id) };`,
+  // cdApplyTrack writes the keys and eases every one of them. Linear keyframes
+  // are the loudest amateur tell, so easing is not optional and has no opt-out.
+  var applied = cdApplyTrack(layer, ${es3Literal(args.property)}, times, values, ${inInfluence}, ${outInfluence});
+
+  var total = 0;
+  for (var k = 0; k < applied.length; k++) { total += applied[k].keyCount; }
+  return { applied: true, keyCount: total, properties: applied, property: ${es3Literal(args.property)}, layerId: String(layer.id) };`,
   );
 }
 
@@ -215,16 +207,42 @@ function renderQueueRender(args: ToolArgs<"queueRender">): string {
   return wrap(
     "queue render",
     `  var comp = cdComp(${es3Literal(args.compId)});
-  var item = app.project.renderQueue.items.add(comp);
+  var rq = app.project.renderQueue;
+  var item = rq.items.add(comp);
   item.render = true;
+
+  // Render settings templates and output module templates are different lists.
+  // Ask for Best Settings by name; if this install renamed it, leave the
+  // default rather than guessing.
+  var renderSettingsApplied = null;
+  var rsWanted = ${es3Literal(String(args.renderSettings.quality ?? "best") === "best" ? "Best Settings" : "Current Settings")};
+  var rsList = (item.templates instanceof Array) ? item.templates : [];
+  for (var r = 0; r < rsList.length; r++) {
+    if (rsList[r] === rsWanted) { item.applyTemplate(rsWanted); renderSettingsApplied = rsWanted; break; }
+  }
+
   var om = item.outputModule(1);
-  try { om.applyTemplate(${es3Literal(args.format)}); } catch (e) { /* keep the default template */ }
+  // AE 26 exposes output module templates as om.templates. There is no
+  // om.templateNames — reading it throws, which is how this was found.
+  var omList = (om.templates instanceof Array) ? om.templates : [];
+  var wanted = ${es3Literal(args.format)};
+  var templateApplied = null;
+  for (var t = 0; t < omList.length; t++) {
+    if (omList[t] === wanted) { om.applyTemplate(wanted); templateApplied = wanted; break; }
+  }
+
   om.file = new File(${es3Literal(args.outputPath)});
   return {
     queued: true,
     outputPath: om.file.fsName,
-    renderQueueIndex: item.index,
-    templateApplied: om.templateNames.length > 0
+    renderQueueIndex: rq.numItems,
+    // Reported rather than assumed: the caller can see whether the format it
+    // asked for existed on this installation, instead of quietly getting the
+    // default output module and discovering it after a long render.
+    templateRequested: wanted,
+    templateApplied: templateApplied,
+    renderSettingsApplied: renderSettingsApplied,
+    availableTemplates: omList
   };`,
   );
 }

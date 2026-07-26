@@ -127,15 +127,29 @@ describe("ExtendScript adapter", () => {
   });
 });
 
+/**
+ * Strips comments and string literals so the ES3 checks below look at code
+ * only. An earlier version matched the word "let" inside a prose comment and
+ * failed every operation, which is a test bug rather than a source bug.
+ */
+function codeOnly(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/\/\/[^\n]*/g, " ")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""');
+}
+
 describe("generated scripts obey the ES3 constraint", () => {
   it.each(ALL_OPERATIONS)("%s uses no syntax ExtendScript cannot parse", (operation, args) => {
-    const source = script(operation, args);
+    const source = codeOnly(script(operation, args));
     // ExtendScript is ES3: these would be syntax errors inside After Effects.
     expect(source).not.toMatch(/\bconst\s/);
     expect(source).not.toMatch(/\blet\s/);
     expect(source).not.toMatch(/=>/);
     expect(source).not.toMatch(/`/);
     expect(source).not.toMatch(/\.forEach\(/);
+    expect(source).not.toMatch(/\.map\(/);
+    expect(source).not.toMatch(/\bclass\s/);
   });
 
   it.each(ALL_OPERATIONS)("%s wraps its work in one undo group", (operation, args) => {
@@ -160,8 +174,10 @@ describe("craft rules are not optional", () => {
     expect(source).toContain("setTemporalEaseAtKey");
     expect(source).toContain("KeyframeInterpolationType.BEZIER");
     expect(source).not.toContain("KeyframeInterpolationType.LINEAR");
-    // The loop must cover every key, not just the interior ones.
-    expect(source).toMatch(/for \(i = 1; i <= last; i\+\+\)/);
+    // Easing runs over every key on the property, not just the interior ones,
+    // and there is no branch that can skip it.
+    expect(source).toMatch(/for \(var i = 0; i < times\.length; i\+\+\)/);
+    expect(source).toContain("cdEaseKeysAtTimes(prop, times, inInfluence, outInfluence)");
   });
 
   it("sizes the temporal ease by the property's temporal dimension, not its value", () => {

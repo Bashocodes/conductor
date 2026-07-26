@@ -22,7 +22,7 @@ import {
   type ProposalProvenance,
   type RunJournal,
 } from "./journal.js";
-import { normalizeToolResult } from "./normalizeResult.js";
+import { findHostError, normalizeToolResult } from "./normalizeResult.js";
 import { evaluatePrecondition } from "./precondition.js";
 import { verifyExpectedShape } from "./verify.js";
 
@@ -167,6 +167,24 @@ export class RecipeEngine {
           // structuredContent get the same shape as everyone else, so recipes
           // stay portable across server implementations.
           const result = normalizeToolResult(rawResult);
+
+          // A script host can report transport success for a script that threw.
+          // Catch that here, or the journal would record work that never happened.
+          const hostError = findHostError(result);
+          if (hostError !== undefined) {
+            throw new ConductorEngineError(
+              "STEP_FAILED",
+              `Step '${step.id}' reported success but ${step.server} raised: ${hostError.message}`,
+              {
+                details: {
+                  server: step.server,
+                  tool: mapped.tool,
+                  operation: step.operation,
+                  ...(hostError.line === undefined ? {} : { line: hostError.line }),
+                },
+              },
+            );
+          }
 
           if (step.verify !== undefined) {
             verifyExpectedShape(result, step.verify);

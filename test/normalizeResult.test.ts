@@ -1,6 +1,24 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeToolResult } from "../src/engine/normalizeResult.js";
+import { findHostError, normalizeToolResult } from "../src/engine/normalizeResult.js";
+
+/** The exact double envelope a live After Effects MCP server returned. */
+function aeEnvelope(payload: unknown, status = "SUCCESS") {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          senderId: "abc123",
+          response: { content: [{ type: "text", text: JSON.stringify(payload) }] },
+          status,
+          projectInfo: { numItems: 9, projectName: "Demo.aep" },
+        }),
+      },
+    ],
+    isError: false,
+  };
+}
 
 describe("normalizeToolResult", () => {
   it("synthesizes structuredContent from a JSON text block", () => {
@@ -65,5 +83,74 @@ describe("normalizeToolResult", () => {
   it("leaves a result with no content array alone", () => {
     const raw = { isError: false };
     expect(normalizeToolResult(raw)).toBe(raw);
+  });
+
+  it("peels the double envelope a script-execution server wraps around its payload", () => {
+    /*
+     * Live-observed 2026-07-25: the payload the script returned sits two
+     * envelopes deep. Unwrapping only the outer one produced a
+     * structuredContent of { senderId, response, status, projectInfo } — no
+     * compId — and every recipe reference resolved to nothing.
+     */
+    const normalized = normalizeToolResult(
+      aeEnvelope({ compId: "40", name: "Conductor Title Card", width: 1920 }),
+    ) as { structuredContent: Record<string, unknown> };
+    expect(normalized.structuredContent).toEqual({
+      compId: "40",
+      name: "Conductor Title Card",
+      width: 1920,
+    });
+  });
+
+  it("stops at the outermost payload when there is no deeper envelope", () => {
+    const normalized = normalizeToolResult({
+      content: [{ type: "text", text: '{"compId":"7"}' }],
+    }) as { structuredContent: Record<string, unknown> };
+    expect(normalized.structuredContent).toEqual({ compId: "7" });
+  });
+
+  it("does not descend into a response that is not an envelope", () => {
+    const normalized = normalizeToolResult({
+      content: [{ type: "text", text: '{"response":"queued","ok":true}' }],
+    }) as { structuredContent: Record<string, unknown> };
+    expect(normalized.structuredContent).toEqual({ response: "queued", ok: true });
+  });
+});
+
+describe("findHostError", () => {
+  it("catches a script failure the transport reported as a success", () => {
+    /*
+     * The failure mode that matters most. After Effects answered
+     * status "SUCCESS" and MCP isError false for a script that threw; only the
+     * innermost payload said otherwise. Without this the journal would record
+     * a step as succeeded while nothing happened in the application.
+     */
+    const normalized = normalizeToolResult(
+      aeEnvelope({ error: "TypeError: null is not an object", line: 5 }),
+    );
+    expect(findHostError(normalized)).toEqual({
+      message: "TypeError: null is not an object",
+      line: 5,
+    });
+  });
+
+  it("reports an error with no line number", () => {
+    const normalized = normalizeToolResult(aeEnvelope({ error: "Something broke" }));
+    expect(findHostError(normalized)).toEqual({ message: "Something broke" });
+  });
+
+  it("stays quiet for a healthy payload", () => {
+    const normalized = normalizeToolResult(aeEnvelope({ compId: "40" }));
+    expect(findHostError(normalized)).toBeUndefined();
+  });
+
+  it("ignores an empty or non-string error field", () => {
+    expect(findHostError({ structuredContent: { error: "" } })).toBeUndefined();
+    expect(findHostError({ structuredContent: { error: 500 } })).toBeUndefined();
+  });
+
+  it("handles values that are not results", () => {
+    expect(findHostError(null)).toBeUndefined();
+    expect(findHostError("text")).toBeUndefined();
   });
 });
