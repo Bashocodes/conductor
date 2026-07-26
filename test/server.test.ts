@@ -124,6 +124,40 @@ describe("conductor ui server", () => {
     expect(typeof report.detail).toBe("string");
   });
 
+  it("suggests a real, unique output path so no required field starts blank", async () => {
+    const url = await serve();
+    const body = (await (await fetch(`${url}api/suggest-output?recipe=title-card&ext=mov`, {
+      headers: { "x-conductor-token": await tokenFor(url) },
+    })).json()) as { path: string };
+    expect(body.path).toMatch(/\/Movies\/Conductor\/title-card-[\d-]+\.mov$/);
+  });
+
+  it("sanitises the recipe and extension used to build a suggestion", async () => {
+    const url = await serve();
+    const body = (await (await fetch(
+      `${url}api/suggest-output?recipe=${encodeURIComponent("../../etc/pw")}&ext=${encodeURIComponent("m/o v")}`,
+      { headers: { "x-conductor-token": await tokenFor(url) } },
+    )).json()) as { path: string };
+    // Neither value may introduce a path separator.
+    expect(body.path).not.toContain("..");
+    expect(body.path.split("/Movies/Conductor/")[1]).not.toContain("/");
+  });
+
+  it("exposes which parameters are file paths, so a picker can be offered", async () => {
+    const url = await serve();
+    const body = (await (await fetch(`${url}api/recipes`, {
+      headers: { "x-conductor-token": await tokenFor(url) },
+    })).json()) as {
+      recipes: Array<{ id: string; params: Record<string, { path?: string }> }>;
+    };
+    const grade = body.recipes.find((recipe) => recipe.id === "hdr-safe-grade");
+    expect(grade?.params.clip?.path).toBe("open-file");
+    expect(grade?.params.outputPath?.path).toBe("save-file");
+    const transition = body.recipes.find((recipe) => recipe.id === "motivated-transition");
+    expect(transition?.params.clipA?.path).toBe("open-file");
+    expect(transition?.params.clipB?.path).toBe("open-file");
+  });
+
   it("404s an unknown path", async () => {
     const url = await serve();
     expect((await fetch(`${url}api/nothing`, {
@@ -207,6 +241,18 @@ describe("the console cannot be driven by another site", () => {
     const second = await tokenFor(await serve());
     expect(first).not.toBe(second);
     expect(first.length).toBeGreaterThan(20);
+  });
+
+  it("refuses a file-dialog request from another site", async () => {
+    // This endpoint opens a native dialog on the user's screen; a page they
+    // visit must not be able to summon one.
+    const url = await serve();
+    const response = await fetch(`${url}api/choose`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://evil.example.com" },
+      body: JSON.stringify({ mode: "open-file" }),
+    });
+    expect(response.status).toBe(403);
   });
 
   it("declares a content security policy with no external origins", async () => {

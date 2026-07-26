@@ -2,6 +2,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { mkdir } from "node:fs/promises";
 
 import { createAdapterRegistryFromConfig } from "../adapters/registry.js";
 import { RecipeEngine } from "../engine/engine.js";
@@ -97,6 +100,47 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   }
   if (chunks.length === 0) return {};
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+/**
+ * Opens the operating system's own file dialog and returns the chosen path.
+ *
+ * A browser cannot show you a real Finder window, and it cannot tell a page the
+ * true path of a file you pick. But Conductor is already a local process, so it
+ * can simply ask the OS — which is the only reason typing absolute paths was
+ * ever the alternative.
+ *
+ * Cancelling is not an error: AppleScript reports -128, which becomes a plain
+ * "cancelled" rather than a failure the console has to explain.
+ */
+async function chooseFileViaFinder(options: {
+  mode: "open-file" | "save-file";
+  prompt: string;
+  suggestedName?: string;
+}): Promise<{ path?: string; cancelled?: boolean }> {
+  // The prompt is the only caller-influenced value; quotes are escaped so it
+  // cannot terminate the AppleScript string.
+  const quote = (value: string) => `"${value.replace(/["\\]/g, "\\$&")}"`;
+  const script =
+    options.mode === "open-file"
+      ? `POSIX path of (choose file with prompt ${quote(options.prompt)})`
+      : `POSIX path of (choose file name with prompt ${quote(options.prompt)}` +
+        (options.suggestedName === undefined
+          ? ")"
+          : ` default name ${quote(options.suggestedName)})`);
+
+  try {
+    const { stdout } = await execFileAsync("/usr/bin/osascript", ["-e", script], {
+      timeout: 300_000,
+    });
+    return { path: stdout.trim() };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("-128") || /user cancel/i.test(message)) {
+      return { cancelled: true };
+    }
+    throw new Error(`Could not open the file dialog: ${message}`);
+  }
 }
 
 /**
@@ -229,6 +273,40 @@ export async function startConductorServer(options: ServeOptions): Promise<{
       return;
     }
 
+    if (url.pathname === "/api/choose" && request.method === "POST") {
+      const body = (await readJsonBody(request)) as {
+        mode?: string;
+        prompt?: string;
+        suggestedName?: string;
+      };
+      const mode = body.mode === "save-file" ? "save-file" : "open-file";
+      const chosen = await chooseFileViaFinder({
+        mode,
+        prompt: String(body.prompt ?? "Choose a file"),
+        ...(body.suggestedName === undefined ? {} : { suggestedName: String(body.suggestedName) }),
+      });
+      sendJson(response, 200, chosen);
+      return;
+    }
+
+    if (url.pathname === "/api/suggest-output") {
+      // A blank required field is a dead end. Offer somewhere real to write,
+      // already unique, that a person can accept or replace.
+      const recipeId = (url.searchParams.get("recipe") ?? "render").replace(/[^a-z0-9-]/gi, "");
+      const extension = (url.searchParams.get("ext") ?? "mov").replace(/[^a-z0-9]/gi, "");
+      const stamp = new Date()
+        .toISOString()
+        .replace(/[-:]/g, "")
+        .replace("T", "-")
+        .slice(0, 15);
+      const directory = join(homedir(), "Movies", "Conductor");
+      await mkdir(directory, { recursive: true });
+      sendJson(response, 200, {
+        path: join(directory, `${recipeId}-${stamp}.${extension}`),
+      });
+      return;
+    }
+
     if (url.pathname === "/api/run") {
       await streamRun(url, response);
       return;
@@ -274,7 +352,21 @@ export async function startConductorServer(options: ServeOptions): Promise<{
       }).run(recipe, params);
       send("done", { status: "completed", runId: result.runId, journalPath: result.journalPath });
     } catch (error) {
-      send("done", { status: "failed", error: error instanceof Error ? error.message : String(error) });
+      // "failed validation" alone is useless. Zod already knows which field and
+      // why, so pass that through rather than discarding it.
+      const details = (error as { details?: unknown }).details;
+      const fieldErrors = Array.isArray(details)
+        ? details.map((issue) => {
+          const record = issue as { path?: unknown[]; message?: string };
+          const field = Array.isArray(record.path) ? record.path.join(".") : "";
+          return field === "" ? String(record.message) : `${field}: ${String(record.message)}`;
+        })
+        : [];
+      send("done", {
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+        fieldErrors,
+      });
     } finally {
       await clients.closeAll();
       response.end();

@@ -32,6 +32,16 @@ const stringParamSchema = describedParamSchema
     minLength: z.number().int().nonnegative().optional(),
     maxLength: z.number().int().nonnegative().optional(),
     pattern: z.string().optional(),
+    /**
+     * Marks a parameter as a filesystem path so a front end can offer a real
+     * file dialog. Nobody should be typing an absolute path by hand.
+     *
+     * `open-file` picks something that already exists; `save-file` names
+     * something that will be written. `suggestedExtension` seeds the save
+     * dialog and the default Conductor offers.
+     */
+    path: z.enum(["open-file", "save-file"]).optional(),
+    suggestedExtension: z.string().min(1).optional(),
   })
   .strict()
   .superRefine((definition, context) => {

@@ -58,6 +58,12 @@ export const CONSOLE_HTML = String.raw`<!doctype html>
   .field .hint { margin-top: 4px; font-size: 11px; color: var(--ink-3); line-height: 1.45; }
   input, select { width: 100%; padding: 8px 10px; background: #0f1116; color: var(--ink);
                   border: 1px solid var(--line-2); border-radius: 7px; font: 13px var(--mono); }
+  .row { display: flex; gap: 8px; align-items: stretch; }
+  .row input { flex: 1; min-width: 0; }
+  button.browse { flex: none; padding: 0 14px; border-radius: 7px; border: 1px solid var(--line-2);
+                  background: #1a1e26; color: var(--ink); font: 600 12.5px/1 inherit; cursor: pointer; white-space: nowrap; }
+  button.browse:hover { border-color: var(--accent); }
+  .needs { align-self: center; font-size: 12px; color: var(--warn); }
   input:focus, select:focus { outline: none; border-color: var(--accent); }
   input[type=checkbox] { width: auto; }
 
@@ -116,6 +122,7 @@ export const CONSOLE_HTML = String.raw`<!doctype html>
           <button class="act" id="btnDry" disabled>Preview plan</button>
           <button class="act primary" id="btnRun" disabled>Run in After Effects</button>
           <button class="act" id="btnDoctor">Re-check connection</button>
+          <span class="needs" id="needs"></span>
         </div>
       </div>
 
@@ -191,6 +198,55 @@ function renderRecipes() {
   }
 }
 
+/** Turns camelCase into something readable: outputPath -> Output path. */
+function humanLabel(name) {
+  const spaced = name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase();
+}
+
+async function chooseFile(def, control) {
+  try {
+    const result = await api("/api/choose", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        mode: def.path,
+        prompt: def.description || "Choose a file",
+        suggestedName: control.value ? control.value.split("/").pop() : undefined,
+      }),
+    });
+    if (result.path) { control.value = result.path; updateReadiness(); }
+  } catch (error) {
+    banner("bad", escapeHtml(error.message));
+  }
+}
+
+/** Fills a blank save-path with somewhere real, so no field starts as a dead end. */
+async function suggestOutput(name, def, control) {
+  if (control.value) return;
+  try {
+    const result = await api("/api/suggest-output?recipe=" + encodeURIComponent(selected.id) +
+      "&ext=" + encodeURIComponent(def.suggestedExtension || "mov"));
+    if (result.path && !control.value) { control.value = result.path; updateReadiness(); }
+  } catch { /* a suggestion is a courtesy, not a requirement */ }
+}
+
+/** Required fields drive the Run button, so a click can never land on a validation error. */
+function updateReadiness() {
+  if (!selected) return;
+  const missing = [];
+  for (const [name, def] of Object.entries(selected.params)) {
+    const required = def.default === undefined && def.type !== "boolean";
+    const control = $("p_" + name);
+    if (required && control && !control.value.trim()) missing.push(name);
+  }
+  $("btnRun").disabled = running || missing.length > 0;
+  $("btnDry").disabled = missing.length > 0;
+  $("needs").textContent = missing.length === 0
+    ? ""
+    : "Still needed: " + missing.map(humanLabel).join(", ");
+}
+
 function renderParams() {
   if (!selected) return;
   $("paramsTitle").textContent = selected.title;
@@ -215,25 +271,35 @@ function renderParams() {
       if (def.type === "boolean") control.checked = Boolean(def.default);
       else if (def.default !== undefined) control.value = String(def.default);
       if (def.type === "number") { if (def.min !== undefined) control.min = def.min; if (def.max !== undefined) control.max = def.max; }
-      if (required) control.placeholder = "required";
+      if (required) control.placeholder = def.path ? "choose a file…" : "required";
     }
     control.id = "p_" + name;
     control.dataset.kind = def.type;
-    const label = document.createElement("label");
+    control.addEventListener("input", updateReadiness);
+
+    const label = el("label", null, humanLabel(name));
     label.htmlFor = control.id;
-    label.innerHTML = escapeHtml(name) + (required ? ' <span class="req">*</span>' : "");
+    if (required) label.appendChild(el("span", "req", " *"));
     field.appendChild(label);
-    field.appendChild(control);
-    if (def.description) {
-      const hint = document.createElement("div");
-      hint.className = "hint";
-      hint.textContent = def.description;
-      field.appendChild(hint);
+
+    if (def.path) {
+      // Nobody types an absolute path. The server opens the real Finder dialog.
+      const row = el("div", "row");
+      row.appendChild(control);
+      const browse = el("button", "browse", def.path === "save-file" ? "Save as…" : "Choose…");
+      browse.type = "button";
+      browse.onclick = () => { void chooseFile(def, control); };
+      row.appendChild(browse);
+      field.appendChild(row);
+      if (def.path === "save-file") void suggestOutput(name, def, control);
+    } else {
+      field.appendChild(control);
     }
+
+    if (def.description) field.appendChild(el("div", "hint", def.description));
     host.appendChild(field);
   }
-  $("btnDry").disabled = false;
-  $("btnRun").disabled = running;
+  updateReadiness();
 }
 
 function collectParams() {
@@ -327,6 +393,14 @@ $("btnRun").onclick = () => {
     } else {
       note.appendChild(el("b", null, "Run failed."));
       note.appendChild(document.createTextNode(" " + (payload.error || "")));
+      // Name the field and the reason. "failed validation" on its own tells
+      // someone nothing they can act on.
+      if (Array.isArray(payload.fieldErrors) && payload.fieldErrors.length > 0) {
+        const list = el("ul");
+        list.style.margin = "8px 0 0 18px";
+        for (const detail of payload.fieldErrors) list.appendChild(el("li", null, detail));
+        note.appendChild(list);
+      }
     }
     $("out").prepend(note);
     source.close(); running = false; $("btnRun").disabled = false; $("btnDry").disabled = false;

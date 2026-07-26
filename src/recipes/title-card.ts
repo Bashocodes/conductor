@@ -56,8 +56,10 @@ export const titleCardRecipe = recipeSchema.parse({
     },
     outputPath: {
       type: "string",
-      description: "Absolute or server-resolvable render output path.",
+      description: "Where to write the render.",
       minLength: 1,
+      path: "save-file",
+      suggestedExtension: "mov",
     },
   },
   steps: [

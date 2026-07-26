@@ -9,8 +9,9 @@ export const hdrSafeGradeRecipe = recipeSchema.parse({
   params: {
     clip: {
       type: "string",
-      description: "Path to the source clip.",
+      description: "The source clip to grade.",
       minLength: 1,
+      path: "open-file",
     },
     target: {
       type: "enum",
@@ -20,8 +21,10 @@ export const hdrSafeGradeRecipe = recipeSchema.parse({
     },
     outputPath: {
       type: "string",
-      description: "Absolute or server-resolvable 10-bit render output path.",
+      description: "Where to write the 10-bit master.",
       minLength: 1,
+      path: "save-file",
+      suggestedExtension: "mov",
     },
   },
   steps: [
