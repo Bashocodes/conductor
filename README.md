@@ -8,8 +8,17 @@ and verified renders. No AI required; bring one if you want.
 
 Conductor is an MCP client and recipe engine. It does not replace an Adobe MCP
 server, bundle Adobe automation code, or require a model to execute a recipe.
-The current release is `0.1.0-alpha.0`: complete against an in-process fake
-server and awaiting its first human-supervised live-Adobe compatibility runs.
+The current release is `0.1.0-alpha.0`. Two of the three reference recipes —
+`title-card` and `motivated-transition` — have been run end to end against a
+live **After Effects 26.3** over an `execute_extend_script` MCP server, and the
+easing, motion blur and overshoot they produce were read back out of the
+application and checked. `hdr-safe-grade` reaches its colour-configuration step;
+that step deliberately refuses to change a project's working space without an
+explicit opt-in, because doing so reinterprets every composition already in the
+project.
+
+Only After Effects has been exercised against a real host. The Photoshop,
+Premiere and Illustrator paths remain unproven.
 
 ## The gap
 

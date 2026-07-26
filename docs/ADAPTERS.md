@@ -5,7 +5,69 @@ operation into the concrete MCP tool name and request shape exposed by one
 server. This keeps craft recipes portable across the currently fragmented
 Adobe MCP ecosystem.
 
-Adapters are declarative data. They cannot run JavaScript or shell commands.
+## Two kinds of adapter
+
+Adobe MCP servers come in two shapes, and Conductor supports both.
+
+| Kind | For servers that… | Configure with |
+| --- | --- | --- |
+| `script` | expose a single "run this program" tool, such as `execute_extend_script` | `kind: "script"` |
+| `declarative` | expose one tool per operation, such as `ae_create_composition` | `kind: "declarative"` (the default) |
+
+**`script` is the default for After Effects**, because that is the shape of the
+servers that actually exist. It is the one verified against a live After
+Effects 26.3. A declarative adapter cannot drive such a server: mapping an
+operation onto a single script tool means *generating a program*, and arguments
+like a keyframe list are arrays that no string template can serialize.
+
+A declarative adapter is data and cannot run code. A script adapter generates
+code for a named dialect — currently `extendscript-ae` — and is not
+user-programmable either; you choose the dialect and the tool name, and
+Conductor writes the program.
+
+```json
+{
+  "servers": {
+    "aftereffects": {
+      "transport": "stdio",
+      "command": "your-ae-mcp-command",
+      "args": [],
+      "adapter": {
+        "kind": "script",
+        "id": "my-ae",
+        "label": "My After Effects server",
+        "dialect": "extendscript-ae",
+        "tool": "execute_extend_script",
+        "scriptArgument": "script_string"
+      }
+    }
+  }
+}
+```
+
+If your server names the tool or its argument differently, change `tool` and
+`scriptArgument`; everything else is generated.
+
+## What the script adapter guarantees
+
+The generated ExtendScript applies the house rules on every call, so a recipe
+author cannot forget them:
+
+- Motion blur at composition **and** layer level for anything that moves.
+- BEZIER interpolation and a temporal ease on every keyframe it writes. There
+  is no code path that leaves a keyframe linear.
+- Easing applied only to the keys that call wrote, so an entrance keeps its
+  overshoot curve when a later step adds a gentle exit to the same property.
+- The temporal-ease array sized by the property's *temporal* dimension, not its
+  value dimension. Position takes one ease however many components its value
+  has; Scale takes one per component. The wrong length raises a modal inside
+  After Effects that stalls the connection until a human dismisses it.
+- One undo group per operation, closed in a `finally`, so an agent's work steps
+  back like a person's.
+
+It also refuses to change the project working space unless explicitly told to.
+That setting reinterprets every existing composition in an open project, and an
+unrecognised value opens a modal.
 
 ## Start by inspecting the server
 
