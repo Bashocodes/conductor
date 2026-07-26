@@ -119,6 +119,8 @@ const queueRenderArgsSchema = z
     codec: z.string().min(1),
     bitDepth: z.number().int().positive(),
     colorSpace: z.string().min(1),
+    outputModuleTemplate: z.string().min(1).optional(),
+    postProcess: z.enum(["hevc-hlg"]).optional(),
     renderSettings: z.record(z.string(), jsonValueSchema),
   })
   .strict();
@@ -164,7 +166,13 @@ export interface ToolContract {
   };
   queueRender: {
     args: z.infer<typeof queueRenderArgsSchema>;
-    result: { queued: boolean; outputPath: string };
+    result: {
+      queued: boolean;
+      outputPath: string;
+      renderPath?: string;
+      renderQueueIndex?: number;
+      postProcess?: "hevc-hlg";
+    };
   };
   projectInfo: {
     args: z.infer<typeof projectInfoArgsSchema>;

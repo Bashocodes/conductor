@@ -23,6 +23,7 @@ export class FakeAeServer implements McpServerConnection {
   #compCount = 0;
   #layerCount = 0;
   #effectCount = 0;
+  #renderCount = 0;
 
   public async listTools(): Promise<DiscoveredTool[]> {
     // The fake mirrors a granular-tool server, so it always has an operations map.
@@ -58,6 +59,15 @@ export class FakeAeServer implements McpServerConnection {
               : {
                   projectOpen: true,
                   configured: args.action === "configure",
+                  workingSpace:
+                    typeof args.settings === "object" &&
+                    args.settings !== null &&
+                    !Array.isArray(args.settings) &&
+                    typeof args.settings.workingSpace === "string"
+                      ? args.settings.workingSpace
+                      : "Rec.709",
+                  bitsPerChannel: 32,
+                  refused: [],
                 },
         };
       case "fake_create_comp":
@@ -84,10 +94,19 @@ export class FakeAeServer implements McpServerConnection {
         };
       case "fake_apply_effect":
         this.#effectCount += 1;
+        const settingCount =
+          typeof args.settings === "object" &&
+          args.settings !== null &&
+          !Array.isArray(args.settings)
+            ? Object.keys(args.settings).length
+            : 0;
         return {
           structuredContent: {
             effectId: `effect-${this.#effectCount}`,
             applied: true,
+            requestedParameterCount: settingCount,
+            appliedParameterCount: settingCount,
+            refusedParameters: [],
           },
         };
       case "fake_set_keyframes":
@@ -98,6 +117,7 @@ export class FakeAeServer implements McpServerConnection {
           },
         };
       case "fake_queue_render":
+        this.#renderCount += 1;
         return {
           structuredContent: this.invalidQueueResult
             ? {
@@ -107,6 +127,19 @@ export class FakeAeServer implements McpServerConnection {
             : {
                 queued: true,
                 outputPath: args.outputPath,
+                renderPath:
+                  args.postProcess === "hevc-hlg"
+                    ? String(args.outputPath).replace(/\.[^./]+$/, "") +
+                      ".conductor-intermediate.mov"
+                    : args.outputPath,
+                renderQueueIndex: this.#renderCount,
+                templateApplied:
+                  typeof args.outputModuleTemplate === "string"
+                    ? args.outputModuleTemplate
+                    : null,
+                ...(args.postProcess === "hevc-hlg"
+                  ? { postProcess: "hevc-hlg" }
+                  : {}),
               },
         };
       default:

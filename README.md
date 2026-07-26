@@ -150,8 +150,9 @@ queue-verified-transition-render     queueRender    /renders/transition.mov
 ### `hdr-safe-grade`
 
 Applies a conservative technical HLG normalization chain: source inspection,
-32-bit color-managed project settings, bounded exposure, broadcast-safe
-levels, and an explicit 10-bit output. It intentionally adds no creative look.
+an explicitly verified 32-bit HLG working space, neutral exposure and levels,
+a required 10-bit ProRes HLG intermediate, and a validated HEVC Main 10
+BT.2020/HLG delivery. It intentionally adds no creative look.
 
 ```text
 inspect-source-metadata              projectInfo

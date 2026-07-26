@@ -233,6 +233,36 @@ describe("craft rules are not optional", () => {
     expect(source).toContain("allowWorkingSpaceChange");
     expect(source).toContain("refused.push");
   });
+
+  it("fails rather than falling back when HDR output template is missing", () => {
+    const source = script("queueRender", {
+      compId: "27",
+      outputPath: "/tmp/hdr.mp4",
+      format: "QuickTime",
+      codec: "ProRes 422 HQ",
+      bitDepth: 10,
+      colorSpace: "Rec.2100 HLG",
+      outputModuleTemplate: "IG HDR HLG ProRes",
+      postProcess: "hevc-hlg",
+      renderSettings: { quality: "best" },
+    });
+    expect(source).toContain("Required output module template");
+    expect(source).toContain("IG HDR HLG ProRes");
+    expect(source).toContain(".conductor-intermediate.mov");
+  });
+
+  it("reports every effect parameter it could not apply", () => {
+    const source = script("applyEffect", {
+      targetId: "39",
+      effect: "Levels",
+      settings: { "Output White": 1 },
+      atTimeSeconds: 0,
+      durationSeconds: 1,
+    });
+    expect(source).toContain("appliedParameterCount");
+    expect(source).toContain("refusedParameters");
+    expect(source).toContain("Parameter was not found");
+  });
 });
 
 describe("easingToKeyframeEase", () => {

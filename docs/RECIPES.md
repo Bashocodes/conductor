@@ -148,19 +148,20 @@ This is a technical normalization recipe, not a look:
 
 1. `inspect-source-metadata` gets dimensions, frame rate, duration, and color
    metadata.
-2. `configure-hlg-working-project` uses a 32-bit working project with
-   Rec.2100 HLG color management.
+2. `configure-hlg-working-project` requires AE's exact
+   `Rec.2100 HLG Scene W100` working space at 32 bits per channel; a refusal is
+   a failed step, not a green check.
 3. `build-source-matched-composition` preserves source geometry and timing.
 4. `prepare-source-for-technical-grade` isolates the source.
 5. `bounded-exposure-normalization` starts neutral and declares a maximum
    ±1-stop adjustment range.
 6. `broadcast-safe-levels-clamp` leaves gamma neutral, protects black, and
    caps output white conservatively.
-7. `configure-10bit-hlg-output` explicitly selects HLG and maximum-depth
-   rendering.
-8. `queue-verified-10bit-hlg-render` queues a 10-bit mezzanine master and adds
-   the journal handoff to finish and validate it with the external DV tool
-   `reel-hdr`.
+7. `queue-verified-10bit-hlg-render` requires the installed
+   `IG HDR HLG ProRes` output module instead of silently accepting AE's default
+   H.264 module. Conductor renders that 10-bit intermediate, encodes HEVC Main
+   10 with BT.2020/HLG tags, and probes the delivered file before reporting
+   success.
 
 ## Adding a recipe
 

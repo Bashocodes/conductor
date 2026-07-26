@@ -152,7 +152,7 @@ const executionCases: ExecutionCase[] = [
     params: {
       clip: "/media/source.mov",
       target: "hlg",
-      outputPath: "/renders/hlg-master.mov",
+      outputPath: "/renders/hlg-master.mp4",
     },
     expectedTools: [
       "fake_project_info",
@@ -161,7 +161,6 @@ const executionCases: ExecutionCase[] = [
       "fake_precompose",
       "fake_apply_effect",
       "fake_apply_effect",
-      "fake_project_info",
       "fake_queue_render",
     ],
   },
@@ -222,14 +221,14 @@ describe("reference recipe execution", () => {
     });
   }
 
-  it("writes the reel-hdr technical handoff into the HDR journal", async () => {
+  it("records the built-in HDR validation handoff in the journal", async () => {
     const testCase = executionCases.find(
       (candidate) => candidate.recipe.id === "hdr-safe-grade",
     );
     if (testCase === undefined) throw new Error("Missing HDR execution case");
     const { journal } = await runReferenceRecipe(testCase);
 
-    expect(journal.steps.at(-1)?.note).toContain("reel-hdr");
+    expect(journal.steps.at(-1)?.note).toContain("validates the delivered file");
   });
 
   it("journals proposal provenance without any credential field", async () => {

@@ -6,7 +6,9 @@ import { request as httpRequest } from "node:http";
 
 import {
   aerenderArgs,
+  automaticProjectPath,
   finderRevealArgs,
+  hevcHlgArgs,
   startConductorServer,
 } from "../src/server/serve.js";
 
@@ -187,12 +189,34 @@ describe("conductor ui server", () => {
 
   it("scopes aerender to the queue item the recipe just created", () => {
     expect(aerenderArgs("/tmp/project.aep", 7)).toEqual([
-      "-reuse",
       "-project",
       "/tmp/project.aep",
       "-rqindex",
       "7",
     ]);
+  });
+
+  it("saves an untitled project automatically beside the delivery", () => {
+    expect(automaticProjectPath("/renders/coastal-skate-hlg.mp4")).toBe(
+      "/renders/.conductor-projects/coastal-skate-hlg.aep",
+    );
+  });
+
+  it("encodes a genuine 10-bit BT.2020 HLG delivery", () => {
+    const args = hevcHlgArgs("/tmp/intermediate.mov", "/tmp/delivery.mp4");
+    expect(args).toContain("hevc_videotoolbox");
+    expect(args).toContain("main10");
+    expect(args).toContain("p010le");
+    expect(args).toContain("bt2020");
+    expect(args).toContain("bt2020nc");
+    expect(args).toContain("arib-std-b67");
+    expect(args).toContain(
+      "setparams=range=limited:color_primaries=bt2020:color_trc=arib-std-b67:colorspace=bt2020nc",
+    );
+    expect(args).toContain(
+      "hevc_metadata=video_full_range_flag=0:colour_primaries=9:transfer_characteristics=18:matrix_coefficients=9",
+    );
+    expect(args.at(-1)).toBe("/tmp/delivery.mp4");
   });
 
   it("rejects a render request without exact queue item indices", async () => {

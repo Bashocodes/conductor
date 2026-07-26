@@ -4,7 +4,7 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
 {
   "params": {
     "clip": "/media/source.mov",
-    "outputPath": "/renders/hlg-master.mov",
+    "outputPath": "/renders/hlg-master.mp4",
     "target": "hlg",
   },
   "recipeId": "hdr-safe-grade",
@@ -51,12 +51,13 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
       "contractArgs": {
         "action": "configure",
         "settings": {
+          "allowWorkingSpaceChange": true,
           "bitDepth": 32,
           "compensateForSceneReferredProfiles": true,
           "displayColorManagement": true,
           "intent": "technical-normalization-only",
           "linearizeWorkingSpace": false,
-          "workingSpace": "Rec.2100 HLG",
+          "workingSpace": "Rec.2100 HLG Scene W100",
         },
       },
       "id": "configure-hlg-working-project",
@@ -65,6 +66,30 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
       "timeoutMs": 30000,
       "tool": "execute_extend_script",
       "verify": {
+        "properties": {
+          "structuredContent": {
+            "properties": {
+              "bitsPerChannel": {
+                "equals": 32,
+                "type": "number",
+              },
+              "refused": {
+                "equals": [],
+                "type": "array",
+              },
+              "workingSpace": {
+                "equals": "Rec.2100 HLG Scene W100",
+                "type": "string",
+              },
+            },
+            "required": [
+              "workingSpace",
+              "bitsPerChannel",
+              "refused",
+            ],
+            "type": "object",
+          },
+        },
         "required": [
           "structuredContent",
         ],
@@ -151,14 +176,9 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
         "durationSeconds": "\${steps.inspect-source-metadata.result.structuredContent.durationSeconds}",
         "effect": "Exposure",
         "settings": {
-          "allowedAdjustmentStops": [
-            -1,
-            1,
-          ],
-          "creativeLook": false,
-          "exposureStops": 0,
-          "gammaCorrection": 1,
-          "offset": 0,
+          "Exposure": 0,
+          "Gamma Correction": 1,
+          "Offset": 0,
         },
         "targetId": "\${steps.prepare-source-for-technical-grade.result.structuredContent.layerId}",
       },
@@ -168,6 +188,25 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
       "timeoutMs": 30000,
       "tool": "execute_extend_script",
       "verify": {
+        "properties": {
+          "structuredContent": {
+            "properties": {
+              "appliedParameterCount": {
+                "equals": 3,
+                "type": "number",
+              },
+              "refusedParameters": {
+                "equals": [],
+                "type": "array",
+              },
+            },
+            "required": [
+              "appliedParameterCount",
+              "refusedParameters",
+            ],
+            "type": "object",
+          },
+        },
         "required": [
           "structuredContent",
         ],
@@ -183,14 +222,13 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
         "durationSeconds": "\${steps.inspect-source-metadata.result.structuredContent.durationSeconds}",
         "effect": "Levels",
         "settings": {
-          "clampSuperBlack": true,
-          "clampSuperWhite": true,
-          "creativeLook": false,
-          "gamma": 1,
-          "inputBlack": 0,
-          "inputWhite": 1,
-          "outputBlack": 0,
-          "outputWhite": 0.98,
+          "Clip To Output Black": 1,
+          "Clip To Output White": 1,
+          "Gamma": 1,
+          "Input Black": 0,
+          "Input White": 1,
+          "Output Black": 0,
+          "Output White": 1,
         },
         "targetId": "\${steps.prepare-source-for-technical-grade.result.structuredContent.layerId}",
       },
@@ -200,33 +238,25 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
       "timeoutMs": 30000,
       "tool": "execute_extend_script",
       "verify": {
-        "required": [
-          "structuredContent",
-        ],
-        "type": "object",
-      },
-    },
-    {
-      "args": {
-        "script_string": "/* projectInfo: rendered at run time */",
-      },
-      "contractArgs": {
-        "action": "configure",
-        "settings": {
-          "creativeLook": false,
-          "outputBitDepth": 10,
-          "outputColorSpace": "Rec.2100 HLG",
-          "preserveSourceLuminance": true,
-          "renderAtMaximumDepth": true,
-          "target": "hlg",
+        "properties": {
+          "structuredContent": {
+            "properties": {
+              "appliedParameterCount": {
+                "equals": 7,
+                "type": "number",
+              },
+              "refusedParameters": {
+                "equals": [],
+                "type": "array",
+              },
+            },
+            "required": [
+              "appliedParameterCount",
+              "refusedParameters",
+            ],
+            "type": "object",
+          },
         },
-      },
-      "id": "configure-10bit-hlg-output",
-      "operation": "projectInfo",
-      "server": "aftereffects",
-      "timeoutMs": 30000,
-      "tool": "execute_extend_script",
-      "verify": {
         "required": [
           "structuredContent",
         ],
@@ -243,7 +273,9 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
         "colorSpace": "Rec.2100 HLG",
         "compId": "\${steps.build-source-matched-composition.result.structuredContent.compId}",
         "format": "QuickTime",
-        "outputPath": "/renders/hlg-master.mov",
+        "outputModuleTemplate": "IG HDR HLG ProRes",
+        "outputPath": "/renders/hlg-master.mp4",
+        "postProcess": "hevc-hlg",
         "renderSettings": {
           "alpha": false,
           "colorManagement": "preserve-hlg",
@@ -252,7 +284,7 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
         },
       },
       "id": "queue-verified-10bit-hlg-render",
-      "note": "Technical handoff: finish and validate the rendered output with the external DV tool reel-hdr before delivery.",
+      "note": "Conductor renders a 10-bit ProRes intermediate, encodes HEVC Main 10 with BT.2020/HLG tags, and validates the delivered file before reporting success.",
       "operation": "queueRender",
       "server": "aftereffects",
       "timeoutMs": 30000,
@@ -264,14 +296,28 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
               "outputPath": {
                 "type": "string",
               },
+              "postProcess": {
+                "equals": "hevc-hlg",
+                "type": "string",
+              },
               "queued": {
                 "equals": true,
                 "type": "boolean",
+              },
+              "renderPath": {
+                "type": "string",
+              },
+              "templateApplied": {
+                "equals": "IG HDR HLG ProRes",
+                "type": "string",
               },
             },
             "required": [
               "queued",
               "outputPath",
+              "renderPath",
+              "templateApplied",
+              "postProcess",
             ],
             "type": "object",
           },

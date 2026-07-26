@@ -411,9 +411,13 @@ function startRender(queued) {
   });
   source.addEventListener("item", (event) => {
     const payload = JSON.parse(event.data);
-    status.textContent = payload.status === "completed"
-      ? "Finished output " + payload.position + " of " + payload.total + "."
-      : "Rendering output " + payload.position + " of " + payload.total + "…";
+    status.textContent =
+      payload.status === "completed"
+        ? "Finished output " + payload.position + " of " + payload.total + "."
+        : payload.status === "encoding"
+          ? "Encoding and verifying 10-bit HLG output "
+            + payload.position + " of " + payload.total + "…"
+          : "Rendering output " + payload.position + " of " + payload.total + "…";
   });
   source.addEventListener("log", (event) => {
     const payload = JSON.parse(event.data);
@@ -428,9 +432,12 @@ function startRender(queued) {
     panel.className = "banner " + (payload.status === "completed" ? "ok" : "bad");
     panel.innerHTML = "";
     if (payload.status === "completed") {
-      panel.appendChild(el("b", null, "Render finished."));
+      const hlg = queued.some((entry) => entry.postProcess === "hevc-hlg");
+      panel.appendChild(el("b", null, hlg ? "HDR render finished and verified." : "Render finished."));
       panel.appendChild(document.createTextNode(
-        " Your file" + (queued.length === 1 ? " is" : "s are") + " ready."));
+        hlg
+          ? " The delivery is HEVC Main 10 with BT.2020 and HLG metadata."
+          : " Your file" + (queued.length === 1 ? " is" : "s are") + " ready."));
       for (const entry of queued) appendOutputRow(panel, entry, "Show in Finder");
     } else {
       panel.appendChild(el("b", null, "Render failed."));

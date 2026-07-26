@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { homedir } from "node:os";
-import { join, dirname } from "node:path";
-import { mkdir, stat } from "node:fs/promises";
+import { basename, dirname, extname, join } from "node:path";
+import { mkdir, rename, stat, unlink } from "node:fs/promises";
 
 import { createAdapterRegistryFromConfig } from "../adapters/registry.js";
 import { RecipeEngine } from "../engine/engine.js";
@@ -35,6 +35,13 @@ export interface ServeOptions {
   configPath: string;
   port: number;
   host?: string;
+}
+
+interface PendingRender {
+  outputPath: string;
+  renderPath: string;
+  postProcess?: "hevc-hlg";
+  templateApplied: string | null;
 }
 
 /**
@@ -153,8 +160,9 @@ async function chooseFileViaFinder(options: {
  * succeeded. `aerender` avoids all of that: Conductor is already a local
  * process, so it can run Adobe's renderer directly and read its progress.
  *
- * `-reuse` hands the work to the instance already open rather than launching a
- * second one, which also means it will not quit the application afterwards.
+ * Conductor deliberately does not pass `-reuse`: on AE 26 that mode can return
+ * before the output is durable and can replace the GUI session with an empty
+ * project. A separate aerender process waits for completion and exits cleanly.
  */
 const AERENDER_CANDIDATES = [
   "/Applications/Adobe After Effects 2026/aerender",
@@ -169,6 +177,25 @@ async function findAerender(): Promise<string | undefined> {
   return undefined;
 }
 
+const FFMPEG_CANDIDATES = [
+  "/opt/homebrew/bin/ffmpeg",
+  "/usr/local/bin/ffmpeg",
+  "/opt/local/bin/ffmpeg",
+];
+
+const FFPROBE_CANDIDATES = [
+  "/opt/homebrew/bin/ffprobe",
+  "/usr/local/bin/ffprobe",
+  "/opt/local/bin/ffprobe",
+];
+
+async function findExecutable(candidates: string[]): Promise<string | undefined> {
+  for (const candidate of candidates) {
+    if (await stat(candidate).then(() => true).catch(() => false)) return candidate;
+  }
+  return undefined;
+}
+
 /** Always reveal in Finder; never hand `open` a path that it could launch. */
 export function finderRevealArgs(target: string, exists: boolean): string[] {
   return ["-R", exists ? target : dirname(target)];
@@ -176,7 +203,40 @@ export function finderRevealArgs(target: string, exists: boolean): string[] {
 
 /** Render only the queue item the recipe just created, not stale queued work. */
 export function aerenderArgs(projectPath: string, renderQueueIndex: number): string[] {
-  return ["-reuse", "-project", projectPath, "-rqindex", String(renderQueueIndex)];
+  return ["-project", projectPath, "-rqindex", String(renderQueueIndex)];
+}
+
+/** An untitled AE project is implementation state, not another user decision. */
+export function automaticProjectPath(deliveryPath: string): string {
+  const projectName = basename(deliveryPath, extname(deliveryPath));
+  return join(dirname(deliveryPath), ".conductor-projects", `${projectName}.aep`);
+}
+
+/** Matches the known-good HLG delivery produced for Sample on 2026-07-25. */
+export function hevcHlgArgs(inputPath: string, outputPath: string): string[] {
+  return [
+    "-y",
+    "-i", inputPath,
+    "-map", "0:v:0",
+    "-map", "0:a?",
+    "-vf", "setparams=range=limited:color_primaries=bt2020:color_trc=arib-std-b67:colorspace=bt2020nc",
+    "-c:v", "hevc_videotoolbox",
+    "-profile:v", "main10",
+    "-pix_fmt", "p010le",
+    "-b:v", "20M",
+    "-maxrate:v", "24M",
+    "-bufsize:v", "40M",
+    "-tag:v", "hvc1",
+    "-color_range", "tv",
+    "-color_primaries", "bt2020",
+    "-color_trc", "arib-std-b67",
+    "-colorspace", "bt2020nc",
+    "-bsf:v", "hevc_metadata=video_full_range_flag=0:colour_primaries=9:transfer_characteristics=18:matrix_coefficients=9",
+    "-c:a", "aac",
+    "-b:a", "256k",
+    "-movflags", "+faststart",
+    outputPath,
+  ];
 }
 
 function parseRenderQueueIndices(value: string | null): number[] | undefined {
@@ -199,12 +259,60 @@ function renderProjectStateScript(saveAsPath?: string): string {
   return (
     "var p = app.project;\n" +
     `${save}\n` +
-    "var queuedIndices = [];\n" +
+    "var queuedItems = [];\n" +
     "for (var i = 1; i <= p.renderQueue.numItems; i++) {\n" +
-    "  if (p.renderQueue.item(i).status === RQItemStatus.QUEUED) { queuedIndices.push(i); }\n" +
+    "  var item = p.renderQueue.item(i);\n" +
+    "  if (item.status === RQItemStatus.QUEUED) {\n" +
+    "    var file = item.outputModule(1).file;\n" +
+    "    queuedItems.push({ index: i, renderPath: file ? file.fsName : null });\n" +
+    "  }\n" +
     "}\n" +
-    "return { saved: true, path: p.file.fsName, queuedIndices: queuedIndices };"
+    "return { saved: true, path: p.file.fsName, queuedItems: queuedItems };"
   );
+}
+
+async function assertRenderedFile(path: string): Promise<void> {
+  const info = await stat(path).catch(() => undefined);
+  if (info === undefined || !info.isFile() || info.size === 0) {
+    throw new Error(`Adobe reported success, but no rendered file exists at ${path}`);
+  }
+}
+
+async function assertHlgDelivery(path: string): Promise<void> {
+  await assertRenderedFile(path);
+  const ffprobe = await findExecutable(FFPROBE_CANDIDATES);
+  if (ffprobe === undefined) {
+    throw new Error("ffprobe is required to verify the HDR delivery, but it was not found.");
+  }
+  const { stdout } = await execFileAsync(
+    ffprobe,
+    [
+      "-v", "error",
+      "-select_streams", "v:0",
+      "-show_entries",
+      "stream=codec_name,profile,pix_fmt,color_space,color_transfer,color_primaries",
+      "-of", "json",
+      path,
+    ],
+    { timeout: 30_000 },
+  );
+  const parsed = JSON.parse(stdout) as {
+    streams?: Array<Record<string, unknown>>;
+  };
+  const video = parsed.streams?.[0];
+  const valid =
+    video?.codec_name === "hevc" &&
+    video.profile === "Main 10" &&
+    typeof video.pix_fmt === "string" &&
+    video.pix_fmt.includes("10") &&
+    video.color_space === "bt2020nc" &&
+    video.color_transfer === "arib-std-b67" &&
+    video.color_primaries === "bt2020";
+  if (!valid) {
+    throw new Error(
+      `The rendered file exists, but its HDR metadata is invalid: ${JSON.stringify(video)}`,
+    );
+  }
 }
 
 /**
@@ -233,6 +341,7 @@ export async function startConductorServer(options: ServeOptions): Promise<{
   const host = options.host ?? "127.0.0.1";
   // New every start, so a token cannot outlive the session it belongs to.
   const sessionToken = randomUUID();
+  const pendingRenders = new Map<number, PendingRender>();
   let boundPort = options.port;
 
   const server = createServer((request, response) => {
@@ -400,12 +509,13 @@ export async function startConductorServer(options: ServeOptions): Promise<{
   }
 
   /**
-   * Runs everything sitting in After Effects' render queue, and streams
-   * aerender's own output back.
+   * Renders the exact queue items created by the preceding recipe and streams
+   * aerender/ffmpeg output back.
    *
    * aerender works from a project file, not merely the in-memory project. An
-   * existing project is saved in place; for an untitled project, Conductor
-   * opens a Finder Save dialog and then asks After Effects to save there.
+   * existing project is saved in place. An untitled project is saved
+   * automatically beside the delivery in a hidden Conductor project folder;
+   * the render output path already supplied by the user is enough information.
    */
   async function streamRender(url: URL, response: ServerResponse): Promise<void> {
     response.writeHead(200, {
@@ -441,7 +551,7 @@ export async function startConductorServer(options: ServeOptions): Promise<{
     const config = await loadConductorConfig(options.configPath);
     const clients = new McpClientManager(config);
     let projectPath: string | undefined;
-    let queuedIndices: number[] = [];
+    let queuedItems: Array<{ index: number; renderPath: string }> = [];
     try {
       // Ask After Effects to flush the project to disk and report where it lives.
       const connection = await clients.get("aftereffects");
@@ -455,22 +565,15 @@ export async function startConductorServer(options: ServeOptions): Promise<{
           .structuredContent ?? {};
 
       if (payload.saved !== true) {
-        const chosen = await chooseFileViaFinder({
-          mode: "save-file",
-          prompt: "Save the After Effects project so Conductor can render it.",
-          suggestedName: "Conductor Project.aep",
-        });
-        if (chosen.path === undefined) {
-          send("done", {
-            status: "failed",
-            error: "Rendering was cancelled because the After Effects project was not saved.",
-          });
-          response.end();
-          return;
+        const deliveryPath = pendingRenders.get(requestedIndices[0] as number)?.outputPath;
+        if (deliveryPath === undefined) {
+          throw new Error("Conductor lost the output path for this untitled project.");
         }
+        const projectPathForDelivery = automaticProjectPath(deliveryPath);
+        await mkdir(dirname(projectPathForDelivery), { recursive: true });
         raw = await connection.callTool(
           "execute_extend_script",
-          { script_string: renderProjectStateScript(chosen.path) },
+          { script_string: renderProjectStateScript(projectPathForDelivery) },
           30_000,
         );
         payload =
@@ -482,10 +585,21 @@ export async function startConductorServer(options: ServeOptions): Promise<{
         throw new Error("After Effects did not report a saved project path.");
       }
       projectPath = payload.path;
-      queuedIndices = Array.isArray(payload.queuedIndices)
-        ? payload.queuedIndices.filter(
-          (value): value is number => Number.isInteger(value) && Number(value) > 0,
-        )
+      queuedItems = Array.isArray(payload.queuedItems)
+        ? payload.queuedItems.flatMap((value) => {
+          if (
+            typeof value !== "object" ||
+            value === null ||
+            !Number.isInteger((value as { index?: unknown }).index) ||
+            typeof (value as { renderPath?: unknown }).renderPath !== "string"
+          ) {
+            return [];
+          }
+          return [{
+            index: (value as { index: number }).index,
+            renderPath: (value as { renderPath: string }).renderPath,
+          }];
+        })
         : [];
     } catch (error) {
       send("done", {
@@ -498,7 +612,9 @@ export async function startConductorServer(options: ServeOptions): Promise<{
       await clients.closeAll();
     }
 
-    const unavailable = requestedIndices.filter((index) => !queuedIndices.includes(index));
+    const unavailable = requestedIndices.filter(
+      (index) => !queuedItems.some((item) => item.index === index),
+    );
     if (unavailable.length > 0) {
       send("done", {
         status: "failed",
@@ -512,20 +628,12 @@ export async function startConductorServer(options: ServeOptions): Promise<{
 
     send("start", { projectPath, indices: requestedIndices, aerender });
     let tail = "";
-    for (let position = 0; position < requestedIndices.length; position += 1) {
-      const renderQueueIndex = requestedIndices[position] as number;
-      send("item", {
-        status: "started",
-        renderQueueIndex,
-        position: position + 1,
-        total: requestedIndices.length,
-      });
-
-      // -reuse drives the instance already open rather than starting a second
-      // one. -rqindex prevents old queue entries from rendering by surprise.
-      const child = spawn(aerender, aerenderArgs(projectPath, renderQueueIndex), {
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+    const runProcess = async (
+      command: string,
+      args: string[],
+      renderQueueIndex: number,
+    ): Promise<number> => {
+      const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
       const emit = (chunk: Buffer, stream: "out" | "err") => {
         tail = (tail + chunk.toString("utf8")).slice(-4_000);
         for (const line of chunk.toString("utf8").split("\n")) {
@@ -535,22 +643,101 @@ export async function startConductorServer(options: ServeOptions): Promise<{
       };
       child.stdout.on("data", (chunk: Buffer) => emit(chunk, "out"));
       child.stderr.on("data", (chunk: Buffer) => emit(chunk, "err"));
-
-      const code = await new Promise<number>((resolve) => {
+      return await new Promise<number>((resolve) => {
         child.on("close", (exitCode) => resolve(exitCode ?? -1));
-        child.on("error", () => resolve(-1));
+        child.on("error", (error) => {
+          tail = (tail + `\n${error.message}`).slice(-4_000);
+          resolve(-1);
+        });
       });
-      if (code !== 0) {
+    };
+
+    const delivered: string[] = [];
+    for (let position = 0; position < requestedIndices.length; position += 1) {
+      const renderQueueIndex = requestedIndices[position] as number;
+      const queuedItem = queuedItems.find((item) => item.index === renderQueueIndex);
+      if (queuedItem === undefined) continue;
+      const pending = pendingRenders.get(renderQueueIndex) ?? {
+        outputPath: queuedItem.renderPath,
+        renderPath: queuedItem.renderPath,
+        templateApplied: null,
+      };
+      send("item", {
+        status: "started",
+        renderQueueIndex,
+        position: position + 1,
+        total: requestedIndices.length,
+      });
+
+      try {
+        const before = await stat(pending.renderPath).catch(() => undefined);
+        if (pending.postProcess !== undefined) {
+          // This is an internal intermediate, never a user-authored file.
+          await unlink(pending.renderPath).catch(() => undefined);
+        }
+        const renderCode = await runProcess(
+          aerender,
+          aerenderArgs(projectPath, renderQueueIndex),
+          renderQueueIndex,
+        );
+        if (renderCode !== 0) {
+          throw new Error(`aerender exited with code ${renderCode}.`);
+        }
+        await assertRenderedFile(pending.renderPath);
+        const after = await stat(pending.renderPath);
+        if (
+          before !== undefined &&
+          before.size === after.size &&
+          before.mtimeMs === after.mtimeMs
+        ) {
+          throw new Error(
+            `Adobe exited successfully but did not update ${pending.renderPath}`,
+          );
+        }
+
+        if (pending.postProcess === "hevc-hlg") {
+          const ffmpeg = await findExecutable(FFMPEG_CANDIDATES);
+          if (ffmpeg === undefined) {
+            throw new Error("ffmpeg is required for 10-bit HLG delivery, but it was not found.");
+          }
+          await mkdir(dirname(pending.outputPath), { recursive: true });
+          const partialPath = `${pending.outputPath}.conductor-partial.mp4`;
+          await unlink(partialPath).catch(() => undefined);
+          send("item", {
+            status: "encoding",
+            renderQueueIndex,
+            position: position + 1,
+            total: requestedIndices.length,
+          });
+          const encodeCode = await runProcess(
+            ffmpeg,
+            hevcHlgArgs(pending.renderPath, partialPath),
+            renderQueueIndex,
+          );
+          if (encodeCode !== 0) {
+            throw new Error(`HLG encoding exited with code ${encodeCode}.`);
+          }
+          await assertHlgDelivery(partialPath);
+          await rename(partialPath, pending.outputPath);
+          await assertHlgDelivery(pending.outputPath);
+          await unlink(pending.renderPath).catch(() => undefined);
+        } else {
+          await assertRenderedFile(pending.outputPath);
+        }
+
+        delivered.push(pending.outputPath);
+        pendingRenders.delete(renderQueueIndex);
+      } catch (error) {
         send("done", {
           status: "failed",
-          exitCode: code,
           renderQueueIndex,
-          error: `aerender exited with code ${code}.`,
+          error: error instanceof Error ? error.message : String(error),
           tail,
         });
         response.end();
         return;
       }
+
       send("item", {
         status: "completed",
         renderQueueIndex,
@@ -559,7 +746,12 @@ export async function startConductorServer(options: ServeOptions): Promise<{
       });
     }
 
-    send("done", { status: "completed", rendered: requestedIndices.length });
+    send("done", {
+      status: "completed",
+      rendered: requestedIndices.length,
+      outputPaths: delivered,
+      projectPath,
+    });
     response.end();
   }
 
@@ -607,7 +799,9 @@ export async function startConductorServer(options: ServeOptions): Promise<{
        */
       const queued: Array<{
         outputPath: string;
+        renderPath: string;
         renderQueueIndex: number;
+        postProcess?: "hevc-hlg";
         templateApplied: string | null;
       }> = [];
       for (const value of Object.values(result.outputs)) {
@@ -616,14 +810,21 @@ export async function startConductorServer(options: ServeOptions): Promise<{
         if (
           payload?.queued === true &&
           typeof payload.outputPath === "string" &&
+          typeof payload.renderPath === "string" &&
           typeof payload.renderQueueIndex === "number"
         ) {
-          queued.push({
+          const entry: PendingRender & { renderQueueIndex: number } = {
             outputPath: payload.outputPath,
+            renderPath: payload.renderPath,
             renderQueueIndex: payload.renderQueueIndex,
+            ...(payload.postProcess === "hevc-hlg"
+              ? { postProcess: "hevc-hlg" as const }
+              : {}),
             templateApplied:
               typeof payload.templateApplied === "string" ? payload.templateApplied : null,
-          });
+          };
+          queued.push(entry);
+          pendingRenders.set(entry.renderQueueIndex, entry);
         }
       }
       send("done", {

@@ -173,15 +173,29 @@ function renderApplyEffect(args: ToolArgs<"applyEffect">): string {
   var fx = cdAddEffect(layer, ${es3Literal(args.effect)});
   var settings = ${es3Literal(args.settings as unknown as JsonValue)};
   var applied = [];
+  var refused = [];
+  var requestedCount = 0;
   for (var key in settings) {
     if (!settings.hasOwnProperty(key)) { continue; }
+    requestedCount++;
     var target = null;
     try { target = fx.property(key); } catch (e) { target = null; }
     if (target !== null) {
-      try { target.setValue(settings[key]); applied.push(key); } catch (e2) { /* leave at default */ }
+      try { target.setValue(settings[key]); applied.push(key); }
+      catch (e2) { refused.push({ parameter: key, reason: String(e2) }); }
+    } else {
+      refused.push({ parameter: key, reason: "Parameter was not found on " + fx.name });
     }
   }
-  return { effectId: String(layer.id) + ":" + fx.name, name: fx.name, appliedParameters: applied, layerId: String(layer.id) };`,
+  return {
+    effectId: String(layer.id) + ":" + fx.name,
+    name: fx.name,
+    requestedParameterCount: requestedCount,
+    appliedParameterCount: applied.length,
+    appliedParameters: applied,
+    refusedParameters: refused,
+    layerId: String(layer.id)
+  };`,
   );
 }
 
@@ -225,6 +239,12 @@ function renderPrecompose(args: ToolArgs<"precompose">): string {
 }
 
 function renderQueueRender(args: ToolArgs<"queueRender">): string {
+  const renderPath =
+    args.postProcess === "hevc-hlg"
+      ? `${args.outputPath.replace(/\.[^./]+$/, "")}.conductor-intermediate.mov`
+      : args.outputPath;
+  const requiredTemplate = args.outputModuleTemplate;
+  const wantedTemplate = requiredTemplate ?? args.format;
   return wrap(
     "queue render",
     `  var comp = cdComp(${es3Literal(args.compId)});
@@ -246,17 +266,25 @@ function renderQueueRender(args: ToolArgs<"queueRender">): string {
   // AE 26 exposes output module templates as om.templates. There is no
   // om.templateNames — reading it throws, which is how this was found.
   var omList = (om.templates instanceof Array) ? om.templates : [];
-  var wanted = ${es3Literal(args.format)};
+  var wanted = ${es3Literal(wantedTemplate)};
   var templateApplied = null;
   for (var t = 0; t < omList.length; t++) {
     if (omList[t] === wanted) { om.applyTemplate(wanted); templateApplied = wanted; break; }
   }
+  if (templateApplied === null && ${requiredTemplate === undefined ? "false" : "true"}) {
+    throw new Error(
+      "Required output module template '" + wanted + "' is not installed. Available: " +
+      omList.join(", ")
+    );
+  }
 
-  om.file = new File(${es3Literal(args.outputPath)});
+  om.file = new File(${es3Literal(renderPath)});
   return {
     queued: true,
-    outputPath: om.file.fsName,
+    outputPath: ${args.postProcess === undefined ? "om.file.fsName" : es3Literal(args.outputPath)},
+    renderPath: om.file.fsName,
     renderQueueIndex: rq.numItems,
+    postProcess: ${es3Literal(args.postProcess ?? null)},
     // Reported rather than assumed: the caller can see whether the format it
     // asked for existed on this installation, instead of quietly getting the
     // default output module and discovering it after a long render.

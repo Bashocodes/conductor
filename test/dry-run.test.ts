@@ -43,7 +43,7 @@ describe("reference recipe dry runs", () => {
     expect(
       createDryRunPlan(hdrSafeGradeRecipe, {
         clip: "/media/source.mov",
-        outputPath: "/renders/hlg-master.mov",
+        outputPath: "/renders/hlg-master.mp4",
       }),
     ).toMatchSnapshot();
   });

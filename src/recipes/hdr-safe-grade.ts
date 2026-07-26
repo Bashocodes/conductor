@@ -4,7 +4,7 @@ export const hdrSafeGradeRecipe = recipeSchema.parse({
   id: "hdr-safe-grade",
   title: "HDR-Safe Technical Grade",
   description:
-    "Applies a conservative HLG technical normalization chain with bounded exposure and levels, then queues a verified 10-bit master.",
+    "Color-manages SDR footage into HLG and delivers a verified 10-bit HEVC HDR file.",
   targetServers: ["aftereffects"],
   params: {
     clip: {
@@ -24,7 +24,7 @@ export const hdrSafeGradeRecipe = recipeSchema.parse({
       description: "Where to write the 10-bit master.",
       minLength: 1,
       path: "save-file",
-      suggestedExtension: "mov",
+      suggestedExtension: "mp4",
     },
   },
   steps: [
@@ -59,7 +59,8 @@ export const hdrSafeGradeRecipe = recipeSchema.parse({
         action: "configure",
         settings: {
           bitDepth: 32,
-          workingSpace: "Rec.2100 HLG",
+          workingSpace: "Rec.2100 HLG Scene W100",
+          allowWorkingSpaceChange: true,
           displayColorManagement: true,
           linearizeWorkingSpace: false,
           compensateForSceneReferredProfiles: true,
@@ -69,6 +70,20 @@ export const hdrSafeGradeRecipe = recipeSchema.parse({
       verify: {
         type: "object",
         required: ["structuredContent"],
+        properties: {
+          structuredContent: {
+            type: "object",
+            required: ["workingSpace", "bitsPerChannel", "refused"],
+            properties: {
+              workingSpace: {
+                type: "string",
+                equals: "Rec.2100 HLG Scene W100",
+              },
+              bitsPerChannel: { type: "number", equals: 32 },
+              refused: { type: "array", equals: [] },
+            },
+          },
+        },
       },
     },
     {
@@ -138,11 +153,9 @@ export const hdrSafeGradeRecipe = recipeSchema.parse({
           "${steps.prepare-source-for-technical-grade.result.structuredContent.layerId}",
         effect: "Exposure",
         settings: {
-          exposureStops: 0,
-          allowedAdjustmentStops: [-1, 1],
-          offset: 0,
-          gammaCorrection: 1,
-          creativeLook: false,
+          Exposure: 0,
+          Offset: 0,
+          "Gamma Correction": 1,
         },
         atTimeSeconds: 0,
         durationSeconds:
@@ -151,6 +164,16 @@ export const hdrSafeGradeRecipe = recipeSchema.parse({
       verify: {
         type: "object",
         required: ["structuredContent"],
+        properties: {
+          structuredContent: {
+            type: "object",
+            required: ["appliedParameterCount", "refusedParameters"],
+            properties: {
+              appliedParameterCount: { type: "number", equals: 3 },
+              refusedParameters: { type: "array", equals: [] },
+            },
+          },
+        },
       },
     },
     {
@@ -162,14 +185,13 @@ export const hdrSafeGradeRecipe = recipeSchema.parse({
           "${steps.prepare-source-for-technical-grade.result.structuredContent.layerId}",
         effect: "Levels",
         settings: {
-          inputBlack: 0,
-          inputWhite: 1,
-          gamma: 1,
-          outputBlack: 0,
-          outputWhite: 0.98,
-          clampSuperBlack: true,
-          clampSuperWhite: true,
-          creativeLook: false,
+          "Input Black": 0,
+          "Input White": 1,
+          Gamma: 1,
+          "Output Black": 0,
+          "Output White": 1,
+          "Clip To Output Black": 1,
+          "Clip To Output White": 1,
         },
         atTimeSeconds: 0,
         durationSeconds:
@@ -178,26 +200,16 @@ export const hdrSafeGradeRecipe = recipeSchema.parse({
       verify: {
         type: "object",
         required: ["structuredContent"],
-      },
-    },
-    {
-      id: "configure-10bit-hlg-output",
-      server: "aftereffects",
-      operation: "projectInfo",
-      args: {
-        action: "configure",
-        settings: {
-          target: "${params.target}",
-          outputColorSpace: "Rec.2100 HLG",
-          outputBitDepth: 10,
-          preserveSourceLuminance: true,
-          renderAtMaximumDepth: true,
-          creativeLook: false,
+        properties: {
+          structuredContent: {
+            type: "object",
+            required: ["appliedParameterCount", "refusedParameters"],
+            properties: {
+              appliedParameterCount: { type: "number", equals: 7 },
+              refusedParameters: { type: "array", equals: [] },
+            },
+          },
         },
-      },
-      verify: {
-        type: "object",
-        required: ["structuredContent"],
       },
     },
     {
@@ -212,6 +224,8 @@ export const hdrSafeGradeRecipe = recipeSchema.parse({
         codec: "ProRes 422 HQ",
         bitDepth: 10,
         colorSpace: "Rec.2100 HLG",
+        outputModuleTemplate: "IG HDR HLG ProRes",
+        postProcess: "hevc-hlg",
         renderSettings: {
           quality: "best",
           renderAtMaximumDepth: true,
@@ -225,16 +239,28 @@ export const hdrSafeGradeRecipe = recipeSchema.parse({
         properties: {
           structuredContent: {
             type: "object",
-            required: ["queued", "outputPath"],
+            required: [
+              "queued",
+              "outputPath",
+              "renderPath",
+              "templateApplied",
+              "postProcess",
+            ],
             properties: {
               queued: { type: "boolean", equals: true },
               outputPath: { type: "string" },
+              renderPath: { type: "string" },
+              templateApplied: {
+                type: "string",
+                equals: "IG HDR HLG ProRes",
+              },
+              postProcess: { type: "string", equals: "hevc-hlg" },
             },
           },
         },
       },
       note:
-        "Technical handoff: finish and validate the rendered output with the external DV tool reel-hdr before delivery.",
+        "Conductor renders a 10-bit ProRes intermediate, encodes HEVC Main 10 with BT.2020/HLG tags, and validates the delivered file before reporting success.",
     },
   ],
 });
