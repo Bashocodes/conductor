@@ -119,6 +119,13 @@ export const CONSOLE_HTML = String.raw`<!doctype html>
         <h2>Recipes</h2>
         <div id="recipes"><div class="empty">Loading…</div></div>
       </div>
+      <div class="panel" style="margin-top:22px">
+        <h2>Utilities</h2>
+        <button class="recipe" id="btnPrivacyClean">
+          <b>Privacy Clean Copy</b>
+          <span>Choose an image or video. Conductor removes identifying metadata and saves a verified, non-destructive copy beside the original.</span>
+        </button>
+      </div>
     </div>
 
     <div>
@@ -375,6 +382,56 @@ function appendOutputRow(parent, entry, buttonText) {
   parent.appendChild(row);
 }
 
+async function startPrivacyClean() {
+  const utility = $("btnPrivacyClean");
+  utility.disabled = true;
+  $("outTitle").textContent = "Privacy Clean";
+  $("out").innerHTML = '<div class="empty">Choose an image or video…</div>';
+  try {
+    const chosen = await api("/api/choose", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        mode: "open-file",
+        prompt: "Choose an image or video to clean",
+      }),
+    });
+    if (!chosen.path) {
+      $("out").innerHTML = '<div class="empty">Nothing was changed.</div>';
+      return;
+    }
+
+    $("out").innerHTML = '<div class="empty">Removing embedded metadata and verifying the copy…</div>';
+    const result = await api("/api/privacy-clean", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: chosen.path }),
+    });
+
+    const panel = el("div", "banner ok");
+    panel.appendChild(el("b", null, "Privacy-clean copy verified."));
+    panel.appendChild(document.createTextNode(
+      " The original was preserved and the media was not recompressed."));
+    panel.appendChild(el(
+      "div",
+      "queued-note",
+      result.removedMetadataFields > 0
+        ? "Removed " + result.removedMetadataFields + " embedded metadata field"
+          + (result.removedMetadataFields === 1 ? "." : "s.")
+        : "No identifying embedded metadata was present; a clean copy was still created.",
+    ));
+    appendOutputRow(panel, result, "Show in Finder");
+    $("out").innerHTML = "";
+    $("out").appendChild(panel);
+  } catch (error) {
+    $("out").innerHTML =
+      '<div class="banner bad"><b>Privacy Clean failed.</b> '
+      + escapeHtml(error.message) + "</div>";
+  } finally {
+    utility.disabled = false;
+  }
+}
+
 function renderSteps(steps) {
   const marks = { succeeded: ["✓", "s-ok"], failed: ["✕", "s-fail"], skipped: ["–", "s-skip"], running: ["●", "s-run"] };
   const list = el("ul", "steps");
@@ -487,6 +544,7 @@ function startRender(queued) {
 }
 
 $("btnDoctor").onclick = checkDoctor;
+$("btnPrivacyClean").onclick = () => { void startPrivacyClean(); };
 
 $("btnDry").onclick = async () => {
   $("outTitle").textContent = "Planned steps — nothing was touched";

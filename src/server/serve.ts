@@ -15,6 +15,7 @@ import { loadConductorConfig } from "../mcp/config.js";
 import { McpClientManager } from "../mcp/client.js";
 import { getRecipe, listRecipes } from "../recipes/index.js";
 import { CONSOLE_HTML } from "./page.js";
+import { createPrivacyCleanCopy } from "./privacy.js";
 
 /**
  * A local control panel for Conductor.
@@ -492,6 +493,19 @@ export async function startConductorServer(options: ServeOptions): Promise<{
       const exists = await stat(target).then(() => true).catch(() => false);
       await execFileAsync("/usr/bin/open", finderRevealArgs(target, exists));
       sendJson(response, 200, { revealed: exists ? target : dirname(target), fileExists: exists });
+      return;
+    }
+
+    if (url.pathname === "/api/privacy-clean" && request.method === "POST") {
+      const body = (await readJsonBody(request)) as { path?: string };
+      try {
+        const result = await createPrivacyCleanCopy(String(body.path ?? ""));
+        sendJson(response, 200, result);
+      } catch (error) {
+        sendJson(response, 400, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       return;
     }
 

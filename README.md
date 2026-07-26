@@ -172,6 +172,16 @@ queue-verified-10bit-hlg-render      queueRender    /renders/hlg.mov
 See [`docs/RECIPES.md`](docs/RECIPES.md) for the complete plans and recipe
 authoring tutorial.
 
+### Privacy Clean Copy
+
+The console also includes a local utility for images and videos. Choose one
+file and Conductor writes `name-clean.ext` beside it, automatically advancing
+to `name-clean-2.ext` when necessary. It removes embedded EXIF, GPS, XMP, IPTC,
+camera, author, date, comment, and container-description fields, verifies the
+copy, and never modifies or recompresses the original media. Orientation and
+ICC color-profile instructions are retained so cleaning does not rotate or
+recolor an image.
+
 ## Optional brain modes
 
 Brains produce proposals only: a registered recipe ID, schema-valid

@@ -11,6 +11,10 @@ import {
   hevcHlgArgs,
   startConductorServer,
 } from "../src/server/serve.js";
+import {
+  exiftoolPrivacyCleanArgs,
+  privacyCleanOutputCandidate,
+} from "../src/server/privacy.js";
 
 /**
  * Exercises the local control panel over real HTTP. Endpoints that would reach
@@ -67,6 +71,8 @@ describe("conductor ui server", () => {
     expect(html).toContain("<title>Conductor</title>");
     expect(html).toContain("Build &amp; render");
     expect(html).toContain("/api/render?token=");
+    expect(html).toContain("Privacy Clean Copy");
+    expect(html).toContain("/api/privacy-clean");
     expect(html).toContain("refreshAutoSuggestedOutputs");
     expect(html).toContain('control.dataset.autoSuggested = "true"');
     // No CDN fonts, scripts, or styles: the page must work with no network.
@@ -197,6 +203,56 @@ describe("conductor ui server", () => {
       "-R",
       "/tmp/finished.mov",
     ]);
+  });
+
+  it("creates a non-destructive sibling name for every privacy-clean copy", () => {
+    expect(privacyCleanOutputCandidate("/Downloads/photo.jpg")).toBe(
+      "/Downloads/photo-clean.jpg",
+    );
+    expect(privacyCleanOutputCandidate("/Downloads/photo.jpg", 3)).toBe(
+      "/Downloads/photo-clean-3.jpg",
+    );
+    expect(privacyCleanOutputCandidate("/Downloads/clip")).toBe(
+      "/Downloads/clip-clean",
+    );
+  });
+
+  it("removes metadata without recompressing image or video media", () => {
+    const imageArgs = exiftoolPrivacyCleanArgs(
+      "/Downloads/photo.jpg",
+      "/Downloads/photo-clean.jpg",
+      "image",
+    );
+    expect(imageArgs).toContain("-all=");
+    expect(imageArgs).toContain("-Orientation");
+    expect(imageArgs).toContain("-ICC_Profile");
+    expect(imageArgs).not.toContain("-overwrite_original");
+
+    const videoArgs = exiftoolPrivacyCleanArgs(
+      "/Downloads/clip.mp4",
+      "/Downloads/clip-clean.mp4",
+      "video",
+    );
+    expect(videoArgs).toEqual([
+      "-all=",
+      "-o",
+      "/Downloads/clip-clean.mp4",
+      "/Downloads/clip.mp4",
+    ]);
+  });
+
+  it("refuses a privacy-clean request without an absolute source path", async () => {
+    const url = await serve();
+    const response = await fetch(`${url}api/privacy-clean`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-conductor-token": await tokenFor(url),
+      },
+      body: JSON.stringify({ path: "relative/photo.jpg" }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("absolute path");
   });
 
   it("scopes aerender to the queue item the recipe just created", () => {
