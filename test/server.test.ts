@@ -67,6 +67,8 @@ describe("conductor ui server", () => {
     expect(html).toContain("<title>Conductor</title>");
     expect(html).toContain("Build &amp; render");
     expect(html).toContain("/api/render?token=");
+    expect(html).toContain("refreshAutoSuggestedOutputs");
+    expect(html).toContain('control.dataset.autoSuggested = "true"');
     // No CDN fonts, scripts, or styles: the page must work with no network.
     expect(html).not.toMatch(/src="https?:\/\//);
     expect(html).not.toMatch(/href="https?:\/\//);

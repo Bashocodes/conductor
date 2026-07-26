@@ -249,6 +249,9 @@ describe("craft rules are not optional", () => {
     expect(source).toContain("Required output module template");
     expect(source).toContain("IG HDR HLG ProRes");
     expect(source).toContain(".conductor-intermediate.mov");
+    expect(source).toContain("removedStaleQueueItems");
+    expect(source).toContain("rq.item(q).remove()");
+    expect(source).toContain("preserve unrelated or inaccessible queue items");
   });
 
   it("reports every effect parameter it could not apply", () => {

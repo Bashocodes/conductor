@@ -249,6 +249,29 @@ function renderQueueRender(args: ToolArgs<"queueRender">): string {
     "queue render",
     `  var comp = cdComp(${es3Literal(args.compId)});
   var rq = app.project.renderQueue;
+  var removedStaleQueueItems = 0;
+  ${
+    args.postProcess === "hevc-hlg"
+      ? `// aerender runs in a separate process, so its completed state is not
+  // reflected in the GUI project's render queue. Remove only Conductor's
+  // disposable HDR intermediates before adding the next one; otherwise AE
+  // sees several still-queued output modules and may exit without rendering.
+  var conductorSuffix = ".conductor-intermediate.mov";
+  for (var q = rq.numItems; q >= 1; q--) {
+    try {
+      var oldFile = rq.item(q).outputModule(1).file;
+      var oldPath = oldFile ? oldFile.fsName : "";
+      if (
+        oldPath.length >= conductorSuffix.length &&
+        oldPath.substring(oldPath.length - conductorSuffix.length) === conductorSuffix
+      ) {
+        rq.item(q).remove();
+        removedStaleQueueItems++;
+      }
+    } catch (cleanupError) { /* preserve unrelated or inaccessible queue items */ }
+  }`
+      : ""
+  }
   var item = rq.items.add(comp);
   item.render = true;
 
@@ -284,6 +307,7 @@ function renderQueueRender(args: ToolArgs<"queueRender">): string {
     outputPath: ${args.postProcess === undefined ? "om.file.fsName" : es3Literal(args.outputPath)},
     renderPath: om.file.fsName,
     renderQueueIndex: rq.numItems,
+    removedStaleQueueItems: removedStaleQueueItems,
     postProcess: ${es3Literal(args.postProcess ?? null)},
     // Reported rather than assumed: the caller can see whether the format it
     // asked for existed on this installation, instead of quietly getting the

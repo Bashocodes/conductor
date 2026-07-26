@@ -222,20 +222,40 @@ async function chooseFile(def, control) {
         suggestedName: control.value ? control.value.split("/").pop() : undefined,
       }),
     });
-    if (result.path) { control.value = result.path; updateReadiness(); }
+    if (result.path) {
+      control.value = result.path;
+      if (def.path === "save-file") control.dataset.autoSuggested = "false";
+      updateReadiness();
+    }
   } catch (error) {
     banner("bad", escapeHtml(error.message));
   }
 }
 
 /** Fills a blank save-path with somewhere real, so no field starts as a dead end. */
-async function suggestOutput(name, def, control) {
-  if (control.value) return;
+async function suggestOutput(name, def, control, force) {
+  if (control.value && !force) return;
   try {
     const result = await api("/api/suggest-output?recipe=" + encodeURIComponent(selected.id) +
       "&ext=" + encodeURIComponent(def.suggestedExtension || "mov"));
-    if (result.path && !control.value) { control.value = result.path; updateReadiness(); }
+    if (result.path && (!control.value || force)) {
+      control.value = result.path;
+      control.dataset.autoSuggested = "true";
+      updateReadiness();
+    }
   } catch { /* a suggestion is a courtesy, not a requirement */ }
+}
+
+/** After a successful render, prepare a fresh automatic filename for the next clip. */
+async function refreshAutoSuggestedOutputs() {
+  if (!selected) return;
+  for (const [name, def] of Object.entries(selected.params)) {
+    if (def.path !== "save-file") continue;
+    const control = $("p_" + name);
+    if (!control || control.dataset.autoSuggested !== "true") continue;
+    control.value = "";
+    await suggestOutput(name, def, control, true);
+  }
 }
 
 /** Required fields drive the Run button, so a click can never land on a validation error. */
@@ -282,7 +302,10 @@ function renderParams() {
     }
     control.id = "p_" + name;
     control.dataset.kind = def.type;
-    control.addEventListener("input", updateReadiness);
+    control.addEventListener("input", () => {
+      if (def.path === "save-file") control.dataset.autoSuggested = "false";
+      updateReadiness();
+    });
 
     const label = el("label", null, humanLabel(name));
     label.htmlFor = control.id;
@@ -439,6 +462,10 @@ function startRender(queued) {
           ? " The delivery is HEVC Main 10 with BT.2020 and HLG metadata."
           : " Your file" + (queued.length === 1 ? " is" : "s are") + " ready."));
       for (const entry of queued) appendOutputRow(panel, entry, "Show in Finder");
+      // An automatically suggested path belongs to the render that just
+      // finished. Reusing it for the next clip would silently overwrite the
+      // previous delivery and can leave duplicate AE output modules.
+      void refreshAutoSuggestedOutputs();
     } else {
       panel.appendChild(el("b", null, "Render failed."));
       panel.appendChild(document.createTextNode(" " + (payload.error || "")));
