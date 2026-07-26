@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -18,9 +19,10 @@ import { CONSOLE_HTML } from "./page.js";
  * machine has to. That is exactly what Conductor already is — this just gives
  * it a face, so driving After Effects does not require remembering flags.
  *
- * **Bound to 127.0.0.1 only.** This process starts local programs and drives
- * the creative applications you have open. Nothing off this machine can reach
- * it, which is why it needs no authentication and sends no CORS headers.
+ * **Bound to 127.0.0.1 only** — but that alone is not a security boundary, and
+ * an earlier version of this file wrongly claimed it was. Loopback stops other
+ * machines; it does not stop other *websites*, because a page you visit can
+ * make your own browser issue the request. See the guards below.
  */
 
 const execFileAsync = promisify(execFile);
@@ -29,6 +31,47 @@ export interface ServeOptions {
   configPath: string;
   port: number;
   host?: string;
+}
+
+/**
+ * Binding to loopback keeps other machines out. It does NOT keep other
+ * *websites* out: a page you visit can make your own browser issue requests to
+ * 127.0.0.1, and can point a hostname it controls at 127.0.0.1 so the request
+ * looks same-origin to the browser. Since this server drives After Effects and
+ * accepts file paths, an unguarded endpoint would let any site you happen to
+ * open import files and queue renders on your machine.
+ *
+ * Three guards, each closing a different door:
+ *
+ * 1. `assertLocalHost` — the Host header must name loopback, which is what
+ *    DNS rebinding cannot produce.
+ * 2. `assertSameOrigin` — an Origin or Referer from anywhere else is refused.
+ * 3. `assertToken` — a value minted per server start and readable only from
+ *    the served page, which another origin cannot read.
+ */
+
+function isLoopbackHost(hostHeader: string | undefined, port: number): boolean {
+  if (hostHeader === undefined) return false;
+  const allowed = new Set([
+    `127.0.0.1:${port}`,
+    `localhost:${port}`,
+    `[::1]:${port}`,
+  ]);
+  return allowed.has(hostHeader.toLowerCase());
+}
+
+function isSameOrigin(value: string | undefined, port: number): boolean {
+  if (value === undefined || value === "" || value === "null") return true;
+  try {
+    const origin = new URL(value);
+    return (
+      origin.protocol === "http:" &&
+      (origin.hostname === "127.0.0.1" || origin.hostname === "localhost" || origin.hostname === "::1") &&
+      origin.port === String(port)
+    );
+  } catch {
+    return false;
+  }
 }
 
 function sendJson(response: ServerResponse, status: number, body: unknown): void {
@@ -80,6 +123,9 @@ export async function startConductorServer(options: ServeOptions): Promise<{
   close: () => Promise<void>;
 }> {
   const host = options.host ?? "127.0.0.1";
+  // New every start, so a token cannot outlive the session it belongs to.
+  const sessionToken = randomUUID();
+  let boundPort = options.port;
 
   const server = createServer((request, response) => {
     void handle(request, response).catch((error: unknown) => {
@@ -94,14 +140,44 @@ export async function startConductorServer(options: ServeOptions): Promise<{
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? "/", `http://${host}`);
 
+    // Guard 1: refuse a Host that is not loopback. A rebinding attack reaches
+    // this port under a hostname it controls, and that name lands here.
+    if (!isLoopbackHost(request.headers.host, boundPort)) {
+      sendJson(response, 403, { error: "Conductor only answers to a loopback host." });
+      return;
+    }
+
+    // Guard 2: refuse anything a different site initiated.
+    if (
+      !isSameOrigin(request.headers.origin, boundPort) ||
+      !isSameOrigin(request.headers.referer, boundPort)
+    ) {
+      sendJson(response, 403, { error: "Cross-site requests are refused." });
+      return;
+    }
+
     if (url.pathname === "/" || url.pathname === "/index.html") {
       response.writeHead(200, {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
         "x-content-type-options": "nosniff",
         "x-frame-options": "DENY",
+        // Nothing external loads; say so, so an injection has nowhere to go.
+        "content-security-policy":
+          "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; frame-ancestors 'none'",
+        "referrer-policy": "no-referrer",
       });
-      response.end(CONSOLE_HTML);
+      response.end(CONSOLE_HTML.replace("__CONDUCTOR_SESSION_TOKEN__", sessionToken));
+      return;
+    }
+
+    // Guard 3: every API route needs the token the page was served with.
+    // A page on another origin cannot read this page, so it cannot obtain it.
+    const presented = request.headers["x-conductor-token"] ?? url.searchParams.get("token");
+    if (presented !== sessionToken) {
+      sendJson(response, 403, {
+        error: "Missing or stale session token. Reload the Conductor console.",
+      });
       return;
     }
 
@@ -215,6 +291,8 @@ export async function startConductorServer(options: ServeOptions): Promise<{
 
   const address = server.address();
   const port = typeof address === "object" && address !== null ? address.port : options.port;
+  // Port 0 asks the OS to choose, so the guards must check the real port.
+  boundPort = port;
 
   return {
     url: `http://${host}:${port}/`,

@@ -322,7 +322,8 @@ export function createProgram(
         });
         io.stdout.write(`Conductor console: ${url}\n`);
         io.stdout.write(
-          "Bound to 127.0.0.1 — nothing off this machine can reach it. Ctrl-C to stop.\n",
+          "Bound to 127.0.0.1. Cross-site requests are refused and each API call "
+          + "needs the token this session minted. Ctrl-C to stop.\n",
         );
         if (options.open !== false) {
           // Best effort; the URL is printed either way.

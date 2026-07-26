@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { request as httpRequest } from "node:http";
 
 import { startConductorServer } from "../src/server/serve.js";
 
@@ -16,6 +17,14 @@ afterEach(async () => {
   await stop?.();
   stop = undefined;
 });
+
+/** Reads the session token out of the served page, the way the console does. */
+async function tokenFor(url: string): Promise<string> {
+  const html = await (await fetch(url)).text();
+  const match = /const TOKEN = "([^"]+)"/.exec(html);
+  if (match === null) throw new Error("No session token in the served page");
+  return match[1] as string;
+}
 
 async function serve(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "conductor-serve-"));
@@ -64,7 +73,10 @@ describe("conductor ui server", () => {
 
   it("lists every recipe with its parameters so the form can build itself", async () => {
     const url = await serve();
-    const body = (await (await fetch(`${url}api/recipes`)).json()) as {
+    const token = await tokenFor(url);
+    const body = (await (await fetch(`${url}api/recipes`, {
+      headers: { "x-conductor-token": token },
+    })).json()) as {
       recipes: Array<{ id: string; title: string; params: Record<string, unknown> }>;
     };
     const ids = body.recipes.map((recipe) => recipe.id);
@@ -81,7 +93,7 @@ describe("conductor ui server", () => {
     // this would fail rather than return a plan.
     const response = await fetch(`${url}api/dry-run`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "x-conductor-token": await tokenFor(url) },
       body: JSON.stringify({ recipeId: "title-card", params: { outputPath: "/tmp/a.mov" } }),
     });
     expect(response.status).toBe(200);
@@ -94,7 +106,7 @@ describe("conductor ui server", () => {
     const url = await serve();
     const response = await fetch(`${url}api/dry-run`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "x-conductor-token": await tokenFor(url) },
       body: JSON.stringify({ recipeId: "nope", params: {} }),
     });
     expect(response.status).toBe(400);
@@ -102,7 +114,9 @@ describe("conductor ui server", () => {
 
   it("reports an unreachable host instead of throwing", async () => {
     const url = await serve();
-    const report = (await (await fetch(`${url}api/doctor`)).json()) as {
+    const report = (await (await fetch(`${url}api/doctor`, {
+      headers: { "x-conductor-token": await tokenFor(url) },
+    })).json()) as {
       ok: boolean;
       detail?: string;
     };
@@ -112,6 +126,94 @@ describe("conductor ui server", () => {
 
   it("404s an unknown path", async () => {
     const url = await serve();
-    expect((await fetch(`${url}api/nothing`)).status).toBe(404);
+    expect((await fetch(`${url}api/nothing`, {
+      headers: { "x-conductor-token": await tokenFor(url) },
+    })).status).toBe(404);
+  });
+});
+
+/**
+ * This server drives After Effects and accepts file paths. Loopback binding
+ * keeps other machines out but not other *websites*, because a page you visit
+ * can make your own browser issue the request. Each test below reproduces one
+ * attack that worked before these guards existed.
+ */
+describe("the console cannot be driven by another site", () => {
+  it("refuses a request whose Host is not loopback (DNS rebinding)", async () => {
+    const url = await serve();
+    const token = await tokenFor(url);
+    // `fetch` refuses to set Host — it is a forbidden header — so this goes out
+    // over a raw socket, which is also how a real rebinding request arrives.
+    const port = Number(new URL(url).port);
+    const status = await new Promise<number>((resolve, reject) => {
+      const request = httpRequest(
+        {
+          host: "127.0.0.1",
+          port,
+          path: "/api/recipes",
+          method: "GET",
+          headers: { host: "evil.example.com", "x-conductor-token": token },
+        },
+        (response) => {
+          response.resume();
+          resolve(response.statusCode ?? 0);
+        },
+      );
+      request.on("error", reject);
+      request.end();
+    });
+    expect(status).toBe(403);
+  });
+
+  it("refuses a request carrying a foreign Origin (CSRF)", async () => {
+    const url = await serve();
+    const token = await tokenFor(url);
+    const response = await fetch(`${url}api/recipes`, {
+      headers: { origin: "https://evil.example.com", "x-conductor-token": token },
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it("refuses a request carrying a foreign Referer", async () => {
+    const url = await serve();
+    const token = await tokenFor(url);
+    const response = await fetch(`${url}api/recipes`, {
+      headers: { referer: "https://evil.example.com/page", "x-conductor-token": token },
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it("refuses an API call with no session token", async () => {
+    const url = await serve();
+    expect((await fetch(`${url}api/recipes`)).status).toBe(403);
+  });
+
+  it("refuses a run started without the token, even as a plain GET", async () => {
+    /*
+     * /api/run is a GET so EventSource can consume it, which means an
+     * <img src> or EventSource on any page would otherwise fire it — and a run
+     * imports files and queues renders. The token is what stops that.
+     */
+    const url = await serve();
+    const response = await fetch(
+      `${url}api/run?recipe=title-card&params=${encodeURIComponent('{"outputPath":"/tmp/a.mov"}')}`,
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it("mints a different token per server start", async () => {
+    const first = await tokenFor(await serve());
+    await stop?.();
+    const second = await tokenFor(await serve());
+    expect(first).not.toBe(second);
+    expect(first.length).toBeGreaterThan(20);
+  });
+
+  it("declares a content security policy with no external origins", async () => {
+    const url = await serve();
+    const csp = (await fetch(url)).headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("connect-src 'self'");
   });
 });

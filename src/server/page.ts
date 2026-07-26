@@ -129,6 +129,10 @@ export const CONSOLE_HTML = String.raw`<!doctype html>
 
 <script>
 const $ = (id) => document.getElementById(id);
+/* Minted per server start and injected here. Another origin cannot read this
+   page, so it cannot learn the token — which is what stops a web page you
+   happen to visit from driving your creative applications. */
+const TOKEN = "__CONDUCTOR_SESSION_TOKEN__";
 let recipes = [];
 let selected = null;
 let running = false;
@@ -143,7 +147,9 @@ function banner(kind, html) {
 }
 
 async function api(path, options) {
-  const response = await fetch(path, options);
+  const settings = options || {};
+  settings.headers = Object.assign({}, settings.headers, { "x-conductor-token": TOKEN });
+  const response = await fetch(path, settings);
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || ("HTTP " + response.status));
   return body;
@@ -300,7 +306,10 @@ $("btnRun").onclick = () => {
   $("out").innerHTML = '<div class="empty">Starting…</div>';
   const steps = [];
 
-  const source = new EventSource("/api/run?recipe=" + encodeURIComponent(selected.id) +
+  // EventSource cannot send headers, so the token travels as a query parameter.
+  // It is not a secret from you — only from other origins, which cannot read it.
+  const source = new EventSource("/api/run?token=" + encodeURIComponent(TOKEN) +
+    "&recipe=" + encodeURIComponent(selected.id) +
     "&params=" + encodeURIComponent(JSON.stringify(collectParams())));
 
   const redraw = () => { $("out").innerHTML = ""; $("out").appendChild(renderSteps(steps)); };
