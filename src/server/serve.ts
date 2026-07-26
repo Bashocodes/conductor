@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { mkdir } from "node:fs/promises";
+import { join, dirname } from "node:path";
+import { mkdir, stat } from "node:fs/promises";
 
 import { createAdapterRegistryFromConfig } from "../adapters/registry.js";
 import { RecipeEngine } from "../engine/engine.js";
@@ -307,6 +307,21 @@ export async function startConductorServer(options: ServeOptions): Promise<{
       return;
     }
 
+    if (url.pathname === "/api/reveal" && request.method === "POST") {
+      // Opens Finder at the file, or at its folder when it does not exist yet —
+      // which is the normal case for a queued render.
+      const body = (await readJsonBody(request)) as { path?: string };
+      const target = String(body.path ?? "");
+      if (target === "" || !target.startsWith("/")) {
+        sendJson(response, 400, { error: "An absolute path is required." });
+        return;
+      }
+      const exists = await stat(target).then(() => true).catch(() => false);
+      await execFileAsync("/usr/bin/open", exists ? ["-R", target] : [dirname(target)]);
+      sendJson(response, 200, { revealed: exists ? target : dirname(target), fileExists: exists });
+      return;
+    }
+
     if (url.pathname === "/api/run") {
       await streamRun(url, response);
       return;
@@ -350,7 +365,31 @@ export async function startConductorServer(options: ServeOptions): Promise<{
         adapters: createAdapterRegistryFromConfig(config),
         onStep: (step: JournalStep) => send("step", step),
       }).run(recipe, params);
-      send("done", { status: "completed", runId: result.runId, journalPath: result.journalPath });
+      /*
+       * A recipe QUEUES a render; it does not run one. Saying "finished" and
+       * showing the path someone typed sent them looking for a file that does
+       * not exist — and After Effects rewrites the extension to match the
+       * output module, so even the path was wrong. Report what was actually
+       * queued, using the path After Effects resolved.
+       */
+      const queued: Array<{ outputPath: string; templateApplied: string | null }> = [];
+      for (const value of Object.values(result.outputs)) {
+        const payload = (value as { structuredContent?: Record<string, unknown> })
+          ?.structuredContent;
+        if (payload?.queued === true && typeof payload.outputPath === "string") {
+          queued.push({
+            outputPath: payload.outputPath,
+            templateApplied:
+              typeof payload.templateApplied === "string" ? payload.templateApplied : null,
+          });
+        }
+      }
+      send("done", {
+        status: "completed",
+        runId: result.runId,
+        journalPath: result.journalPath,
+        queued,
+      });
     } catch (error) {
       // "failed validation" alone is useless. Zod already knows which field and
       // why, so pass that through rather than discarding it.

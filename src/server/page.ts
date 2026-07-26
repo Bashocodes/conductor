@@ -64,6 +64,11 @@ export const CONSOLE_HTML = String.raw`<!doctype html>
                   background: #1a1e26; color: var(--ink); font: 600 12.5px/1 inherit; cursor: pointer; white-space: nowrap; }
   button.browse:hover { border-color: var(--accent); }
   .needs { align-self: center; font-size: 12px; color: var(--warn); }
+  .queued-title { margin-top: 12px; font-weight: 700; font-size: 12.5px; }
+  .queued-note { margin-top: 5px; font-size: 12px; line-height: 1.5; opacity: .92; }
+  .queued-row { display: flex; gap: 9px; align-items: center; margin-top: 9px; flex-wrap: wrap; }
+  .queued-row code { flex: 1; min-width: 260px; padding: 6px 9px; border-radius: 6px;
+                     background: rgba(0,0,0,.28); font-size: 11.5px; word-break: break-all; }
   input:focus, select:focus { outline: none; border-color: var(--accent); }
   input[type=checkbox] { width: auto; }
 
@@ -386,10 +391,41 @@ $("btnRun").onclick = () => {
     redraw();
     const note = el("div", "banner " + (payload.status === "completed" ? "warn" : "bad"));
     if (payload.status === "completed") {
-      note.appendChild(el("b", null, "Finished."));
+      const queued = Array.isArray(payload.queued) ? payload.queued : [];
+      note.appendChild(el("b", null, "Built in After Effects."));
       note.appendChild(document.createTextNode(
-        " Look at After Effects — press ⌘Z to step back through the work. Journal: "));
-      note.appendChild(el("code", null, payload.journalPath || ""));
+        " The composition is there now — press ⌘Z to step back through the work."));
+
+      /* A recipe queues a render; it does not run one. Saying "finished" and
+         showing a path sent people looking for a file that was never written. */
+      if (queued.length > 0) {
+        note.appendChild(el("div", "queued-title", "Not rendered yet"));
+        note.appendChild(el("div", "queued-note",
+          "The render is waiting in After Effects' Render Queue. Press Render there "
+          + "(⌘M opens it) to actually write the file. Conductor never starts a long "
+          + "render on your machine without you asking."));
+        for (const entry of queued) {
+          const row = el("div", "queued-row");
+          row.appendChild(el("code", null, entry.outputPath));
+          const reveal = el("button", "browse", "Show folder");
+          reveal.type = "button";
+          reveal.onclick = () => {
+            void api("/api/reveal", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ path: entry.outputPath }),
+            }).catch((error) => banner("bad", escapeHtml(error.message)));
+          };
+          row.appendChild(reveal);
+          note.appendChild(row);
+          if (entry.templateApplied === null) {
+            note.appendChild(el("div", "queued-note",
+              "After Effects kept its default output module, so the format and file "
+              + "extension are whatever that template specifies — not necessarily what "
+              + "you typed."));
+          }
+        }
+      }
     } else {
       note.appendChild(el("b", null, "Run failed."));
       note.appendChild(document.createTextNode(" " + (payload.error || "")));

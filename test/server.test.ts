@@ -158,6 +158,16 @@ describe("conductor ui server", () => {
     expect(transition?.params.clipB?.path).toBe("open-file");
   });
 
+  it("refuses to reveal anything that is not an absolute path", async () => {
+    const url = await serve();
+    const response = await fetch(`${url}api/reveal`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-conductor-token": await tokenFor(url) },
+      body: JSON.stringify({ path: "relative/thing" }),
+    });
+    expect(response.status).toBe(400);
+  });
+
   it("404s an unknown path", async () => {
     const url = await serve();
     expect((await fetch(`${url}api/nothing`, {
