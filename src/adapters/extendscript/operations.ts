@@ -110,7 +110,6 @@ function renderAddTextLayer(args: ToolArgs<"addTextLayer">): string {
   var textProp = layer.property("ADBE Text Properties").property("ADBE Text Document");
   var doc = textProp.value;
   doc.resetCharStyle();
-  doc.font = ${es3Literal(args.font)};
   doc.fontSize = ${size};
   doc.fillColor = cdParseColor(${es3Literal(args.color)});
   doc.applyFill = true;
@@ -118,10 +117,14 @@ function renderAddTextLayer(args: ToolArgs<"addTextLayer">): string {
   doc.justification = ${justification};
   textProp.setValue(doc);
 
+  // Font last and separately: After Effects rejects a name it does not know
+  // outright, which would otherwise discard the rest of the styling with it.
+  var fontResult = cdApplyFont(textProp, ${es3Literal(args.font)});
+
   layer.property("ADBE Transform Group").property("ADBE Position").setValue(${es3Literal(
     args.position as unknown as JsonValue,
   )});
-  return { layerId: String(layer.id), name: layer.name, index: layer.index, compId: String(comp.id) };`,
+  return { layerId: String(layer.id), name: layer.name, index: layer.index, compId: String(comp.id), font: fontResult };`,
   );
 }
 

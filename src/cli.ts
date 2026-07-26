@@ -2,6 +2,7 @@
 
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline/promises";
+import { execFile } from "node:child_process";
 
 import { Command, InvalidArgumentError } from "commander";
 
@@ -17,6 +18,7 @@ import {
   loadConductorConfig,
 } from "./mcp/config.js";
 import { listRecipes, getRecipe } from "./recipes/index.js";
+import { startConductorServer } from "./server/serve.js";
 import type { ParamDefinition } from "./schema/recipe.js";
 import { createAdapterRegistryFromConfig } from "./adapters/registry.js";
 
@@ -292,6 +294,42 @@ export function createProgram(
         io.stdout.write(
           `Run ${result.execution.runId} completed.\nJournal: ${result.execution.journalPath}\n`,
         );
+      },
+    );
+
+  program
+    .command("ui")
+    .alias("serve")
+    .description(
+      "Open a local control panel in your browser — no flags to remember",
+    )
+    .option("-p, --port <number>", "port to listen on", "4173")
+    .option("--no-open", "do not open a browser window")
+    .action(
+      async (
+        options: { port: string; open: boolean },
+        command: Command,
+      ) => {
+        const globalOptions = command.optsWithGlobals<{ config: string }>();
+        const port = Number.parseInt(options.port, 10);
+        if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+          throw new InvalidArgumentError(`Invalid port '${options.port}'`);
+        }
+
+        const { url } = await startConductorServer({
+          configPath: globalOptions.config,
+          port,
+        });
+        io.stdout.write(`Conductor console: ${url}\n`);
+        io.stdout.write(
+          "Bound to 127.0.0.1 — nothing off this machine can reach it. Ctrl-C to stop.\n",
+        );
+        if (options.open !== false) {
+          // Best effort; the URL is printed either way.
+          execFile("/usr/bin/open", [url], () => undefined);
+        }
+        // Hold the process open for the server.
+        await new Promise<never>(() => undefined);
       },
     );
 

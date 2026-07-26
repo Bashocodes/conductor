@@ -361,6 +361,49 @@ function cdEffectTarget(targetId) {
   return cdFindLayer(targetId);
 }
 
+/**
+ * Applies a font, tolerating names a person would type.
+ *
+ * After Effects wants a PostScript name and rejects anything else outright —
+ * "Sans Serif" fails with 'Unable to set "font". Contains invalid character
+ * 32', because of the space. A recipe should not have to know that, and a
+ * default that cannot be applied is worse than no default.
+ *
+ * Tries the requested name, then a few common spellings of it, then falls back
+ * to the font After Effects already chose for the layer, which is always valid.
+ * Reports which one actually stuck rather than pretending the request worked.
+ */
+var CD_FONT_FALLBACKS = {
+  "sans serif": ["Helvetica", "ArialMT", "HelveticaNeue"],
+  "sans-serif": ["Helvetica", "ArialMT", "HelveticaNeue"],
+  "serif": ["Times-Roman", "TimesNewRomanPSMT", "Georgia"],
+  "monospace": ["Menlo-Regular", "Courier", "CourierNewPSMT"],
+  "helvetica": ["Helvetica", "HelveticaNeue"],
+  "arial": ["ArialMT", "Arial"]
+};
+
+function cdApplyFont(textProp, requested) {
+  var doc = textProp.value;
+  var fallbackFont = doc.font;
+
+  var candidates = [requested];
+  var aliases = CD_FONT_FALLBACKS[String(requested).toLowerCase()];
+  if (aliases) { for (var a = 0; a < aliases.length; a++) { candidates.push(aliases[a]); } }
+  // Last resort: whatever After Effects already picked, which is always valid.
+  candidates.push(fallbackFont);
+
+  for (var i = 0; i < candidates.length; i++) {
+    if (candidates[i] === undefined || candidates[i] === null) { continue; }
+    try {
+      var attempt = textProp.value;
+      attempt.font = candidates[i];
+      textProp.setValue(attempt);
+      return { applied: candidates[i], requested: requested, substituted: (candidates[i] !== requested) };
+    } catch (e) { /* try the next spelling */ }
+  }
+  return { applied: fallbackFont, requested: requested, substituted: true };
+}
+
 function cdParseColor(hex) {
   var s = String(hex);
   if (s.charAt(0) === "#") { s = s.substring(1); }

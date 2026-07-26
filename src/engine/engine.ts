@@ -32,6 +32,13 @@ export interface EngineOptions {
   journalWriter?: JournalWriter;
   now?: () => Date;
   createRunId?: (recipeId: string, startedAt: Date) => string;
+  /**
+   * Called as each step settles. A recipe can take a minute of real work inside
+   * a creative application, so anything watching a run — a terminal, a local
+   * UI — needs to see progress rather than a silence that looks like a hang.
+   * Never throws into the run: a failing observer must not fail the recipe.
+   */
+  onStep?: (step: JournalStep) => void;
 }
 
 export interface RunResult {
@@ -85,6 +92,7 @@ export class RecipeEngine {
   readonly #journalWriter: JournalWriter;
   readonly #now: () => Date;
   readonly #createRunId: (recipeId: string, startedAt: Date) => string;
+  readonly #onStep: (step: JournalStep) => void;
 
   public constructor(options: EngineOptions) {
     this.#clientProvider = options.clientProvider;
@@ -92,6 +100,18 @@ export class RecipeEngine {
     this.#journalWriter = options.journalWriter ?? new JournalWriter();
     this.#now = options.now ?? (() => new Date());
     this.#createRunId = options.createRunId ?? defaultRunId;
+    const observer = options.onStep;
+    this.#onStep = observer === undefined
+      ? () => undefined
+      : (step) => {
+        // An observer that throws must not take the run down with it.
+        try { observer(step); } catch { /* progress reporting is best effort */ }
+      };
+  }
+
+  #record(steps: JournalStep[], step: JournalStep): void {
+    steps.push(step);
+    this.#onStep(step);
   }
 
   public async run(
@@ -135,7 +155,7 @@ export class RecipeEngine {
           !evaluatePrecondition(step.precondition, context)
         ) {
           context.steps[step.id] = { status: "skipped" };
-          journalSteps.push({
+          this.#record(journalSteps, {
             id: step.id,
             server: step.server,
             operation: step.operation,
@@ -194,7 +214,7 @@ export class RecipeEngine {
             status: "succeeded",
             result,
           };
-          journalSteps.push({
+          this.#record(journalSteps, {
             id: step.id,
             server: step.server,
             operation: step.operation,
@@ -211,7 +231,7 @@ export class RecipeEngine {
             ...(step.note === undefined ? {} : { note: step.note }),
           });
         } catch (error) {
-          journalSteps.push({
+          this.#record(journalSteps, {
             id: step.id,
             server: step.server,
             operation: step.operation,
