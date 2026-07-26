@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
@@ -10,6 +10,7 @@ import { createAdapterRegistryFromConfig } from "../adapters/registry.js";
 import { RecipeEngine } from "../engine/engine.js";
 import { createDryRunPlan } from "../engine/dry-run.js";
 import type { JournalStep } from "../engine/journal.js";
+import { normalizeToolResult } from "../engine/normalizeResult.js";
 import { loadConductorConfig } from "../mcp/config.js";
 import { McpClientManager } from "../mcp/client.js";
 import { getRecipe, listRecipes } from "../recipes/index.js";
@@ -141,6 +142,69 @@ async function chooseFileViaFinder(options: {
     }
     throw new Error(`Could not open the file dialog: ${message}`);
   }
+}
+
+/**
+ * Where After Effects keeps its headless renderer.
+ *
+ * Rendering through ExtendScript would block After Effects and the MCP
+ * connection with it — and the panel's own timeout is far shorter than any
+ * real render, so a long one would be reported as a failure while it quietly
+ * succeeded. `aerender` avoids all of that: Conductor is already a local
+ * process, so it can run Adobe's renderer directly and read its progress.
+ *
+ * `-reuse` hands the work to the instance already open rather than launching a
+ * second one, which also means it will not quit the application afterwards.
+ */
+const AERENDER_CANDIDATES = [
+  "/Applications/Adobe After Effects 2026/aerender",
+  "/Applications/Adobe After Effects 2025/aerender",
+  "/Applications/Adobe After Effects (Beta)/aerender",
+];
+
+async function findAerender(): Promise<string | undefined> {
+  for (const candidate of AERENDER_CANDIDATES) {
+    if (await stat(candidate).then(() => true).catch(() => false)) return candidate;
+  }
+  return undefined;
+}
+
+/** Always reveal in Finder; never hand `open` a path that it could launch. */
+export function finderRevealArgs(target: string, exists: boolean): string[] {
+  return ["-R", exists ? target : dirname(target)];
+}
+
+/** Render only the queue item the recipe just created, not stale queued work. */
+export function aerenderArgs(projectPath: string, renderQueueIndex: number): string[] {
+  return ["-reuse", "-project", projectPath, "-rqindex", String(renderQueueIndex)];
+}
+
+function parseRenderQueueIndices(value: string | null): number[] | undefined {
+  if (value === null || value === "") return undefined;
+  const parts = value.split(",");
+  if (
+    parts.length > 100 ||
+    parts.some((part) => !/^[1-9]\d*$/.test(part))
+  ) {
+    return undefined;
+  }
+  return [...new Set(parts.map((part) => Number(part)))];
+}
+
+function renderProjectStateScript(saveAsPath?: string): string {
+  const save =
+    saveAsPath === undefined
+      ? "if (!p.file) { return { saved: false }; }\np.save();"
+      : `p.save(new File(${JSON.stringify(saveAsPath)}));`;
+  return (
+    "var p = app.project;\n" +
+    `${save}\n` +
+    "var queuedIndices = [];\n" +
+    "for (var i = 1; i <= p.renderQueue.numItems; i++) {\n" +
+    "  if (p.renderQueue.item(i).status === RQItemStatus.QUEUED) { queuedIndices.push(i); }\n" +
+    "}\n" +
+    "return { saved: true, path: p.file.fsName, queuedIndices: queuedIndices };"
+  );
 }
 
 /**
@@ -317,8 +381,13 @@ export async function startConductorServer(options: ServeOptions): Promise<{
         return;
       }
       const exists = await stat(target).then(() => true).catch(() => false);
-      await execFileAsync("/usr/bin/open", exists ? ["-R", target] : [dirname(target)]);
+      await execFileAsync("/usr/bin/open", finderRevealArgs(target, exists));
       sendJson(response, 200, { revealed: exists ? target : dirname(target), fileExists: exists });
+      return;
+    }
+
+    if (url.pathname === "/api/render" && request.method === "GET") {
+      await streamRender(url, response);
       return;
     }
 
@@ -328,6 +397,170 @@ export async function startConductorServer(options: ServeOptions): Promise<{
     }
 
     sendJson(response, 404, { error: "Not found" });
+  }
+
+  /**
+   * Runs everything sitting in After Effects' render queue, and streams
+   * aerender's own output back.
+   *
+   * aerender works from a project file, not merely the in-memory project. An
+   * existing project is saved in place; for an untitled project, Conductor
+   * opens a Finder Save dialog and then asks After Effects to save there.
+   */
+  async function streamRender(url: URL, response: ServerResponse): Promise<void> {
+    response.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-store",
+      connection: "keep-alive",
+      "x-content-type-options": "nosniff",
+    });
+    const send = (event: string, data: unknown) => {
+      response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    const requestedIndices = parseRenderQueueIndices(url.searchParams.get("indices"));
+    if (requestedIndices === undefined) {
+      send("done", {
+        status: "failed",
+        error: "No valid render queue items were selected.",
+      });
+      response.end();
+      return;
+    }
+
+    const aerender = await findAerender();
+    if (aerender === undefined) {
+      send("done", {
+        status: "failed",
+        error: "Could not find aerender. It ships with After Effects, inside its application folder.",
+      });
+      response.end();
+      return;
+    }
+
+    const config = await loadConductorConfig(options.configPath);
+    const clients = new McpClientManager(config);
+    let projectPath: string | undefined;
+    let queuedIndices: number[] = [];
+    try {
+      // Ask After Effects to flush the project to disk and report where it lives.
+      const connection = await clients.get("aftereffects");
+      let raw = await connection.callTool(
+        "execute_extend_script",
+        { script_string: renderProjectStateScript() },
+        30_000,
+      );
+      let payload =
+        (normalizeToolResult(raw) as { structuredContent?: Record<string, unknown> })
+          .structuredContent ?? {};
+
+      if (payload.saved !== true) {
+        const chosen = await chooseFileViaFinder({
+          mode: "save-file",
+          prompt: "Save the After Effects project so Conductor can render it.",
+          suggestedName: "Conductor Project.aep",
+        });
+        if (chosen.path === undefined) {
+          send("done", {
+            status: "failed",
+            error: "Rendering was cancelled because the After Effects project was not saved.",
+          });
+          response.end();
+          return;
+        }
+        raw = await connection.callTool(
+          "execute_extend_script",
+          { script_string: renderProjectStateScript(chosen.path) },
+          30_000,
+        );
+        payload =
+          (normalizeToolResult(raw) as { structuredContent?: Record<string, unknown> })
+            .structuredContent ?? {};
+      }
+
+      if (payload.saved !== true || typeof payload.path !== "string") {
+        throw new Error("After Effects did not report a saved project path.");
+      }
+      projectPath = payload.path;
+      queuedIndices = Array.isArray(payload.queuedIndices)
+        ? payload.queuedIndices.filter(
+          (value): value is number => Number.isInteger(value) && Number(value) > 0,
+        )
+        : [];
+    } catch (error) {
+      send("done", {
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      response.end();
+      return;
+    } finally {
+      await clients.closeAll();
+    }
+
+    const unavailable = requestedIndices.filter((index) => !queuedIndices.includes(index));
+    if (unavailable.length > 0) {
+      send("done", {
+        status: "failed",
+        error:
+          `Render queue item${unavailable.length === 1 ? "" : "s"} `
+          + `${unavailable.join(", ")} ${unavailable.length === 1 ? "is" : "are"} no longer queued.`,
+      });
+      response.end();
+      return;
+    }
+
+    send("start", { projectPath, indices: requestedIndices, aerender });
+    let tail = "";
+    for (let position = 0; position < requestedIndices.length; position += 1) {
+      const renderQueueIndex = requestedIndices[position] as number;
+      send("item", {
+        status: "started",
+        renderQueueIndex,
+        position: position + 1,
+        total: requestedIndices.length,
+      });
+
+      // -reuse drives the instance already open rather than starting a second
+      // one. -rqindex prevents old queue entries from rendering by surprise.
+      const child = spawn(aerender, aerenderArgs(projectPath, renderQueueIndex), {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const emit = (chunk: Buffer, stream: "out" | "err") => {
+        tail = (tail + chunk.toString("utf8")).slice(-4_000);
+        for (const line of chunk.toString("utf8").split("\n")) {
+          const text = line.trim();
+          if (text !== "") send("log", { stream, text, renderQueueIndex });
+        }
+      };
+      child.stdout.on("data", (chunk: Buffer) => emit(chunk, "out"));
+      child.stderr.on("data", (chunk: Buffer) => emit(chunk, "err"));
+
+      const code = await new Promise<number>((resolve) => {
+        child.on("close", (exitCode) => resolve(exitCode ?? -1));
+        child.on("error", () => resolve(-1));
+      });
+      if (code !== 0) {
+        send("done", {
+          status: "failed",
+          exitCode: code,
+          renderQueueIndex,
+          error: `aerender exited with code ${code}.`,
+          tail,
+        });
+        response.end();
+        return;
+      }
+      send("item", {
+        status: "completed",
+        renderQueueIndex,
+        position: position + 1,
+        total: requestedIndices.length,
+      });
+    }
+
+    send("done", { status: "completed", rendered: requestedIndices.length });
+    response.end();
   }
 
   /** Streams step-by-step progress; a recipe can spend a minute inside After Effects. */
@@ -372,13 +605,22 @@ export async function startConductorServer(options: ServeOptions): Promise<{
        * output module, so even the path was wrong. Report what was actually
        * queued, using the path After Effects resolved.
        */
-      const queued: Array<{ outputPath: string; templateApplied: string | null }> = [];
+      const queued: Array<{
+        outputPath: string;
+        renderQueueIndex: number;
+        templateApplied: string | null;
+      }> = [];
       for (const value of Object.values(result.outputs)) {
         const payload = (value as { structuredContent?: Record<string, unknown> })
           ?.structuredContent;
-        if (payload?.queued === true && typeof payload.outputPath === "string") {
+        if (
+          payload?.queued === true &&
+          typeof payload.outputPath === "string" &&
+          typeof payload.renderQueueIndex === "number"
+        ) {
           queued.push({
             outputPath: payload.outputPath,
+            renderQueueIndex: payload.renderQueueIndex,
             templateApplied:
               typeof payload.templateApplied === "string" ? payload.templateApplied : null,
           });

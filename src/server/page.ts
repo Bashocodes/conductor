@@ -96,8 +96,10 @@ export const CONSOLE_HTML = String.raw`<!doctype html>
         font: 11.5px/1.55 var(--mono); color: var(--ink-2); }
   .empty { color: var(--ink-3); font-size: 13px; padding: 6px 0; }
   .banner { padding: 11px 13px; border-radius: 9px; font-size: 12.5px; margin-bottom: 14px; }
+  .banner.ok { background: rgba(121,201,154,.1); border: 1px solid rgba(121,201,154,.35); color: #c9f5d9; }
   .banner.bad { background: rgba(240,122,122,.1); border: 1px solid rgba(240,122,122,.35); color: #ffc9c9; }
   .banner.warn { background: rgba(224,175,104,.1); border: 1px solid rgba(224,175,104,.35); color: #f3ddb6; }
+  pre.render-log { max-height: 220px; margin-top: 10px; white-space: pre-wrap; }
   code { font-family: var(--mono); font-size: .93em; }
 </style>
 </head>
@@ -125,7 +127,7 @@ export const CONSOLE_HTML = String.raw`<!doctype html>
         <div id="params"><div class="empty">Choose a recipe.</div></div>
         <div class="actions">
           <button class="act" id="btnDry" disabled>Preview plan</button>
-          <button class="act primary" id="btnRun" disabled>Run in After Effects</button>
+          <button class="act primary" id="btnRun" disabled>Build &amp; render</button>
           <button class="act" id="btnDoctor">Re-check connection</button>
           <span class="needs" id="needs"></span>
         </div>
@@ -246,7 +248,7 @@ function updateReadiness() {
     if (required && control && !control.value.trim()) missing.push(name);
   }
   $("btnRun").disabled = running || missing.length > 0;
-  $("btnDry").disabled = missing.length > 0;
+  $("btnDry").disabled = running || missing.length > 0;
   $("needs").textContent = missing.length === 0
     ? ""
     : "Still needed: " + missing.map(humanLabel).join(", ");
@@ -329,6 +331,27 @@ function el(tag, className, text) {
   return node;
 }
 
+function finishInteraction() {
+  running = false;
+  updateReadiness();
+}
+
+function appendOutputRow(parent, entry, buttonText) {
+  const row = el("div", "queued-row");
+  row.appendChild(el("code", null, entry.outputPath));
+  const reveal = el("button", "browse", buttonText);
+  reveal.type = "button";
+  reveal.onclick = () => {
+    void api("/api/reveal", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: entry.outputPath }),
+    }).catch((error) => banner("bad", escapeHtml(error.message)));
+  };
+  row.appendChild(reveal);
+  parent.appendChild(row);
+}
+
 function renderSteps(steps) {
   const marks = { succeeded: ["✓", "s-ok"], failed: ["✕", "s-fail"], skipped: ["–", "s-skip"], running: ["●", "s-run"] };
   const list = el("ul", "steps");
@@ -346,6 +369,87 @@ function renderSteps(steps) {
     list.appendChild(li);
   }
   return list;
+}
+
+/**
+ * Renders only the queue entries created by the recipe that just completed.
+ * Older items may still be waiting in After Effects; silently rendering those
+ * would turn convenience into a nasty surprise.
+ */
+function startRender(queued) {
+  const indices = queued.map((entry) => entry.renderQueueIndex);
+  if (indices.some((index) => !Number.isInteger(index) || index < 1)) {
+    const failure = el("div", "banner bad");
+    failure.appendChild(el("b", null, "Could not start the render."));
+    failure.appendChild(document.createTextNode(
+      " Conductor could not identify the exact render queue item it just created."));
+    $("out").prepend(failure);
+    finishInteraction();
+    return;
+  }
+
+  $("outTitle").textContent = "Rendering";
+  const panel = el("div", "banner warn");
+  const status = el("div");
+  status.appendChild(el("b", null, "Starting Adobe’s renderer…"));
+  panel.appendChild(status);
+  const log = el("pre", "render-log");
+  log.hidden = true;
+  panel.appendChild(log);
+  $("out").prepend(panel);
+
+  const source = new EventSource(
+    "/api/render?token=" + encodeURIComponent(TOKEN)
+      + "&indices=" + encodeURIComponent(indices.join(",")),
+  );
+  let settled = false;
+
+  source.addEventListener("start", (event) => {
+    const payload = JSON.parse(event.data);
+    status.textContent = "Rendering " + payload.indices.length + " output"
+      + (payload.indices.length === 1 ? "" : "s") + "…";
+  });
+  source.addEventListener("item", (event) => {
+    const payload = JSON.parse(event.data);
+    status.textContent = payload.status === "completed"
+      ? "Finished output " + payload.position + " of " + payload.total + "."
+      : "Rendering output " + payload.position + " of " + payload.total + "…";
+  });
+  source.addEventListener("log", (event) => {
+    const payload = JSON.parse(event.data);
+    log.hidden = false;
+    log.textContent = (log.textContent + payload.text + "\n").slice(-20_000);
+    log.scrollTop = log.scrollHeight;
+  });
+  source.addEventListener("done", (event) => {
+    settled = true;
+    const payload = JSON.parse(event.data);
+    source.close();
+    panel.className = "banner " + (payload.status === "completed" ? "ok" : "bad");
+    panel.innerHTML = "";
+    if (payload.status === "completed") {
+      panel.appendChild(el("b", null, "Render finished."));
+      panel.appendChild(document.createTextNode(
+        " Your file" + (queued.length === 1 ? " is" : "s are") + " ready."));
+      for (const entry of queued) appendOutputRow(panel, entry, "Show in Finder");
+    } else {
+      panel.appendChild(el("b", null, "Render failed."));
+      panel.appendChild(document.createTextNode(" " + (payload.error || "")));
+      if (payload.tail) {
+        const tail = el("pre", "render-log", payload.tail);
+        panel.appendChild(tail);
+      }
+    }
+    finishInteraction();
+  });
+  source.onerror = () => {
+    if (settled) return;
+    settled = true;
+    source.close();
+    panel.className = "banner bad";
+    panel.textContent = "Lost the connection while rendering.";
+    finishInteraction();
+  };
 }
 
 $("btnDoctor").onclick = checkDoctor;
@@ -371,11 +475,11 @@ $("btnDry").onclick = async () => {
 
 $("btnRun").onclick = () => {
   running = true;
-  $("btnRun").disabled = true;
-  $("btnDry").disabled = true;
+  updateReadiness();
   $("outTitle").textContent = "Running in After Effects";
   $("out").innerHTML = '<div class="empty">Starting…</div>';
   const steps = [];
+  let settled = false;
 
   // EventSource cannot send headers, so the token travels as a query parameter.
   // It is not a secret from you — only from other origins, which cannot read it.
@@ -387,37 +491,23 @@ $("btnRun").onclick = () => {
 
   source.addEventListener("step", (event) => { steps.push(JSON.parse(event.data)); redraw(); });
   source.addEventListener("done", (event) => {
+    settled = true;
     const payload = JSON.parse(event.data);
+    source.close();
     redraw();
-    const note = el("div", "banner " + (payload.status === "completed" ? "warn" : "bad"));
     if (payload.status === "completed") {
       const queued = Array.isArray(payload.queued) ? payload.queued : [];
+      const note = el("div", "banner " + (queued.length > 0 ? "warn" : "ok"));
       note.appendChild(el("b", null, "Built in After Effects."));
       note.appendChild(document.createTextNode(
         " The composition is there now — press ⌘Z to step back through the work."));
-
-      /* A recipe queues a render; it does not run one. Saying "finished" and
-         showing a path sent people looking for a file that was never written. */
       if (queued.length > 0) {
-        note.appendChild(el("div", "queued-title", "Not rendered yet"));
+        note.appendChild(el("div", "queued-title", "Rendering now"));
         note.appendChild(el("div", "queued-note",
-          "The render is waiting in After Effects' Render Queue. Press Render there "
-          + "(⌘M opens it) to actually write the file. Conductor never starts a long "
-          + "render on your machine without you asking."));
+          "Conductor is handing the exact queue item it just created to Adobe’s "
+          + "renderer. You do not need to open the Render Queue or press ⌘M."));
         for (const entry of queued) {
-          const row = el("div", "queued-row");
-          row.appendChild(el("code", null, entry.outputPath));
-          const reveal = el("button", "browse", "Show folder");
-          reveal.type = "button";
-          reveal.onclick = () => {
-            void api("/api/reveal", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ path: entry.outputPath }),
-            }).catch((error) => banner("bad", escapeHtml(error.message)));
-          };
-          row.appendChild(reveal);
-          note.appendChild(row);
+          appendOutputRow(note, entry, "Show folder");
           if (entry.templateApplied === null) {
             note.appendChild(el("div", "queued-note",
               "After Effects kept its default output module, so the format and file "
@@ -426,7 +516,13 @@ $("btnRun").onclick = () => {
           }
         }
       }
+      $("out").prepend(note);
+      if (queued.length > 0) {
+        startRender(queued);
+        return;
+      }
     } else {
+      const note = el("div", "banner bad");
       note.appendChild(el("b", null, "Run failed."));
       note.appendChild(document.createTextNode(" " + (payload.error || "")));
       // Name the field and the reason. "failed validation" on its own tells
@@ -437,12 +533,15 @@ $("btnRun").onclick = () => {
         for (const detail of payload.fieldErrors) list.appendChild(el("li", null, detail));
         note.appendChild(list);
       }
+      $("out").prepend(note);
     }
-    $("out").prepend(note);
-    source.close(); running = false; $("btnRun").disabled = false; $("btnDry").disabled = false;
+    finishInteraction();
   });
   source.onerror = () => {
-    source.close(); running = false; $("btnRun").disabled = false; $("btnDry").disabled = false;
+    if (settled) return;
+    settled = true;
+    source.close();
+    finishInteraction();
     $("out").prepend(Object.assign(document.createElement("div"),
       { className: "banner bad", textContent: "Lost the connection to Conductor." }));
   };

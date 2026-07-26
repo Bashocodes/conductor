@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
 
-import { startConductorServer } from "../src/server/serve.js";
+import {
+  aerenderArgs,
+  finderRevealArgs,
+  startConductorServer,
+} from "../src/server/serve.js";
 
 /**
  * Exercises the local control panel over real HTTP. Endpoints that would reach
@@ -59,6 +63,8 @@ describe("conductor ui server", () => {
     expect(response.headers.get("content-type")).toContain("text/html");
     const html = await response.text();
     expect(html).toContain("<title>Conductor</title>");
+    expect(html).toContain("Build &amp; render");
+    expect(html).toContain("/api/render?token=");
     // No CDN fonts, scripts, or styles: the page must work with no network.
     expect(html).not.toMatch(/src="https?:\/\//);
     expect(html).not.toMatch(/href="https?:\/\//);
@@ -168,6 +174,36 @@ describe("conductor ui server", () => {
     expect(response.status).toBe(400);
   });
 
+  it("always asks Finder to reveal a target rather than opening an application", () => {
+    expect(finderRevealArgs("/Applications/Calculator.app/unfinished.mov", false)).toEqual([
+      "-R",
+      "/Applications/Calculator.app",
+    ]);
+    expect(finderRevealArgs("/tmp/finished.mov", true)).toEqual([
+      "-R",
+      "/tmp/finished.mov",
+    ]);
+  });
+
+  it("scopes aerender to the queue item the recipe just created", () => {
+    expect(aerenderArgs("/tmp/project.aep", 7)).toEqual([
+      "-reuse",
+      "-project",
+      "/tmp/project.aep",
+      "-rqindex",
+      "7",
+    ]);
+  });
+
+  it("rejects a render request without exact queue item indices", async () => {
+    const url = await serve();
+    const token = await tokenFor(url);
+    const response = await fetch(`${url}api/render?token=${encodeURIComponent(token)}`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    expect(await response.text()).toContain("No valid render queue items were selected.");
+  });
+
   it("404s an unknown path", async () => {
     const url = await serve();
     expect((await fetch(`${url}api/nothing`, {
@@ -243,6 +279,11 @@ describe("the console cannot be driven by another site", () => {
       `${url}api/run?recipe=title-card&params=${encodeURIComponent('{"outputPath":"/tmp/a.mov"}')}`,
     );
     expect(response.status).toBe(403);
+  });
+
+  it("refuses a render started without the token", async () => {
+    const url = await serve();
+    expect((await fetch(`${url}api/render?indices=1`)).status).toBe(403);
   });
 
   it("mints a different token per server start", async () => {
