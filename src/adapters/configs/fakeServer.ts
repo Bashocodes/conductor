@@ -12,6 +12,10 @@ export const fakeServerAdapterConfig = adapterConfigSchema.parse({
       tool: "fake_add_text_layer",
       argsTemplate: "${args}",
     },
+    addMediaLayer: {
+      tool: "fake_add_media_layer",
+      argsTemplate: "${args}",
+    },
     setKeyframes: {
       tool: "fake_set_keyframes",
       argsTemplate: "${args}",

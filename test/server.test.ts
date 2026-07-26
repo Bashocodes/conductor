@@ -7,6 +7,8 @@ import { request as httpRequest } from "node:http";
 import {
   aerenderArgs,
   automaticProjectPath,
+  cinematicPreviewOutputPath,
+  cinematicPreviewProxyArgs,
   finderRevealArgs,
   hevcHlgArgs,
   startConductorServer,
@@ -99,6 +101,7 @@ describe("conductor ui server", () => {
     expect(ids).toContain("title-card");
     expect(ids).toContain("motivated-transition");
     expect(ids).toContain("hdr-safe-grade");
+    expect(ids).toContain("cinematic-look-lab");
     const titleCard = body.recipes.find((recipe) => recipe.id === "title-card");
     expect(Object.keys(titleCard?.params ?? {})).toContain("outputPath");
   });
@@ -182,6 +185,21 @@ describe("conductor ui server", () => {
     const transition = body.recipes.find((recipe) => recipe.id === "motivated-transition");
     expect(transition?.params.clipA?.path).toBe("open-file");
     expect(transition?.params.clipB?.path).toBe("open-file");
+    const cinematic = body.recipes.find((recipe) => recipe.id === "cinematic-look-lab");
+    expect(cinematic?.params.look).toMatchObject({
+      default: "Clean Cinema",
+      values: [
+        "Clean Cinema",
+        "Golden Hour",
+        "Teal & Amber",
+        "Dream Bloom",
+        "Film Noir",
+        "Neon Night",
+        "Bleach Bypass",
+      ],
+    });
+    expect(cinematic?.params.watermarkText?.default).toBe("sample_");
+    expect(cinematic?.params.watermarkVisibility?.default).toBe(10);
   });
 
   it("refuses to reveal anything that is not an absolute path", async () => {
@@ -285,6 +303,46 @@ describe("conductor ui server", () => {
       "hevc_metadata=video_full_range_flag=0:colour_primaries=9:transfer_characteristics=18:matrix_coefficients=9",
     );
     expect(args.at(-1)).toBe("/tmp/delivery.mp4");
+  });
+
+  it("uses macOS ColorSync to make the HLG sample browser-safe", () => {
+    const args = cinematicPreviewProxyArgs("/tmp/look.mp4", "/tmp/look.browser.m4v");
+    expect(args).toEqual([
+      "--source",
+      "/tmp/look.mp4",
+      "--preset",
+      "Preset1280x720",
+      "--output",
+      "/tmp/look.browser.m4v",
+      "--replace",
+    ]);
+  });
+
+  it("keeps generated look samples in the private preview directory", () => {
+    expect(
+      cinematicPreviewOutputPath(
+        "/tmp/.cinematic-previews",
+        "Teal & Amber",
+        "unit",
+      ),
+    ).toBe("/tmp/.cinematic-previews/teal-amber-unit.mp4");
+  });
+
+  it("refuses to register arbitrary local files as cinematic previews", async () => {
+    const url = await serve();
+    const response = await fetch(`${url}api/cinematic/register-preview`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-conductor-token": await tokenFor(url),
+      },
+      body: JSON.stringify({
+        look: "Clean Cinema",
+        path: "/tmp/not-a-conductor-preview.mp4",
+      }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("private preview folder");
   });
 
   it("rejects a render request without exact queue item indices", async () => {

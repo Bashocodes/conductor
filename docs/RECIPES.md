@@ -71,13 +71,14 @@ for supervised delivery or quality-control instructions.
 
 ## ToolContract operations
 
-The reference recipes depend on seven logical operations:
+The reference recipes depend on eight logical operations:
 
 | Operation | Responsibility |
 | --- | --- |
 | `projectInfo` | Inspect media/project metadata or configure project settings |
 | `createComp` | Create a composition with explicit technical settings |
 | `addTextLayer` | Add and style a text layer |
+| `addMediaLayer` | Add a brand image at a comp-relative size and safe position |
 | `setKeyframes` | Apply two or more keyframes with required cubic-bezier easing |
 | `applyEffect` | Apply a named effect with explicit bounded settings and timing |
 | `precompose` | Import/organize sources or precompose existing layers |

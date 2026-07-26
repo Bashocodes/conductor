@@ -1,9 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
+import { createReadStream } from "node:fs";
 import { promisify } from "node:util";
 import { homedir } from "node:os";
-import { basename, dirname, extname, join } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { mkdir, rename, stat, unlink } from "node:fs/promises";
 
 import { createAdapterRegistryFromConfig } from "../adapters/registry.js";
@@ -13,6 +14,7 @@ import type { JournalStep } from "../engine/journal.js";
 import { normalizeToolResult } from "../engine/normalizeResult.js";
 import { loadConductorConfig } from "../mcp/config.js";
 import { McpClientManager } from "../mcp/client.js";
+import { CINEMATIC_LOOKS } from "../recipes/cinematic-look-lab.js";
 import { getRecipe, listRecipes } from "../recipes/index.js";
 import { CONSOLE_HTML } from "./page.js";
 import { createPrivacyCleanCopy } from "./privacy.js";
@@ -240,6 +242,81 @@ export function hevcHlgArgs(inputPath: string, outputPath: string): string[] {
   ];
 }
 
+/** macOS ColorSync tone-maps the HLG sample into a browser-safe BT.709 proxy. */
+export function cinematicPreviewProxyArgs(
+  inputPath: string,
+  outputPath: string,
+): string[] {
+  return [
+    "--source", inputPath,
+    "--preset", "Preset1280x720",
+    "--output", outputPath,
+    "--replace",
+  ];
+}
+
+function cinematicThumbnailArgs(inputPath: string, outputPath: string): string[] {
+  return [
+    "-y",
+    "-ss", "0.75",
+    "-i", inputPath,
+    "-frames:v", "1",
+    "-q:v", "2",
+    outputPath,
+  ];
+}
+
+export function cinematicPreviewOutputPath(
+  directory: string,
+  look: string,
+  unique = `${Date.now()}-${randomUUID()}`,
+): string {
+  const slug = look.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return join(directory, `${slug}-${unique}.mp4`);
+}
+
+async function streamLocalMedia(
+  request: IncomingMessage,
+  response: ServerResponse,
+  path: string,
+  contentType: string,
+): Promise<void> {
+  const info = await stat(path);
+  const range = request.headers.range;
+  const common = {
+    "content-type": contentType,
+    "cache-control": "no-store",
+    "accept-ranges": "bytes",
+    "x-content-type-options": "nosniff",
+  };
+  if (range === undefined) {
+    response.writeHead(200, { ...common, "content-length": info.size });
+    createReadStream(path).pipe(response);
+    return;
+  }
+
+  const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+  if (match === null) {
+    response.writeHead(416, { ...common, "content-range": `bytes */${info.size}` });
+    response.end();
+    return;
+  }
+  const start = match[1] === "" ? 0 : Number(match[1]);
+  const requestedEnd = match[2] === "" ? info.size - 1 : Number(match[2]);
+  const end = Math.min(requestedEnd, info.size - 1);
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || start > end) {
+    response.writeHead(416, { ...common, "content-range": `bytes */${info.size}` });
+    response.end();
+    return;
+  }
+  response.writeHead(206, {
+    ...common,
+    "content-length": end - start + 1,
+    "content-range": `bytes ${start}-${end}/${info.size}`,
+  });
+  createReadStream(path, { start, end }).pipe(response);
+}
+
 function parseRenderQueueIndices(value: string | null): number[] | undefined {
   if (value === null || value === "") return undefined;
   const parts = value.split(",");
@@ -343,6 +420,16 @@ export async function startConductorServer(options: ServeOptions): Promise<{
   // New every start, so a token cannot outlive the session it belongs to.
   const sessionToken = randomUUID();
   const pendingRenders = new Map<number, PendingRender>();
+  const previewMedia = new Map<
+    string,
+    { look: string; sourcePath: string; videoPath: string; thumbnailPath: string }
+  >();
+  const previewDirectory = join(
+    homedir(),
+    "Movies",
+    "Conductor",
+    ".cinematic-previews",
+  );
   let boundPort = options.port;
 
   const server = createServer((request, response) => {
@@ -382,7 +469,7 @@ export async function startConductorServer(options: ServeOptions): Promise<{
         "x-frame-options": "DENY",
         // Nothing external loads; say so, so an injection has nowhere to go.
         "content-security-policy":
-          "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; frame-ancestors 'none'",
+          "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; media-src 'self'; form-action 'none'; frame-ancestors 'none'",
         "referrer-policy": "no-referrer",
       });
       response.end(CONSOLE_HTML.replace("__CONDUCTOR_SESSION_TOKEN__", sessionToken));
@@ -432,6 +519,96 @@ export async function startConductorServer(options: ServeOptions): Promise<{
       } finally {
         await clients.closeAll();
       }
+      return;
+    }
+
+    if (url.pathname === "/api/cinematic/preview-output") {
+      const look = url.searchParams.get("look") ?? "";
+      if (!(CINEMATIC_LOOKS as readonly string[]).includes(look)) {
+        sendJson(response, 400, { error: "Unknown cinematic look." });
+        return;
+      }
+      await mkdir(previewDirectory, { recursive: true });
+      sendJson(response, 200, {
+        path: cinematicPreviewOutputPath(previewDirectory, look),
+      });
+      return;
+    }
+
+    if (
+      url.pathname === "/api/cinematic/register-preview" &&
+      request.method === "POST"
+    ) {
+      const body = (await readJsonBody(request)) as {
+        look?: string;
+        path?: string;
+      };
+      const look = String(body.look ?? "");
+      const path = String(body.path ?? "");
+      if (!(CINEMATIC_LOOKS as readonly string[]).includes(look)) {
+        sendJson(response, 400, { error: "Unknown cinematic look." });
+        return;
+      }
+      if (
+        extname(path).toLowerCase() !== ".mp4" ||
+        resolve(dirname(path)) !== resolve(previewDirectory)
+      ) {
+        sendJson(response, 400, {
+          error: "Preview media must come from Conductor’s private preview folder.",
+        });
+        return;
+      }
+      await assertHlgDelivery(path);
+      const ffmpeg = await findExecutable(FFMPEG_CANDIDATES);
+      if (ffmpeg === undefined) {
+        sendJson(response, 500, { error: "ffmpeg is required to prepare the preview viewer." });
+        return;
+      }
+      const stem = path.slice(0, -extname(path).length);
+      const videoPath = `${stem}.browser.m4v`;
+      const thumbnailPath = `${stem}.jpg`;
+      await execFileAsync(
+        "/usr/bin/avconvert",
+        cinematicPreviewProxyArgs(path, videoPath),
+        { timeout: 180_000, maxBuffer: 4_000_000 },
+      );
+      await execFileAsync(
+        ffmpeg,
+        cinematicThumbnailArgs(videoPath, thumbnailPath),
+        { timeout: 60_000, maxBuffer: 4_000_000 },
+      );
+      await assertRenderedFile(videoPath);
+      await assertRenderedFile(thumbnailPath);
+      const id = randomUUID();
+      previewMedia.set(id, {
+        look,
+        sourcePath: path,
+        videoPath,
+        thumbnailPath,
+      });
+      const token = encodeURIComponent(sessionToken);
+      sendJson(response, 200, {
+        id,
+        look,
+        thumbnailUrl: `/api/cinematic/media?id=${encodeURIComponent(id)}&kind=thumbnail&token=${token}`,
+        videoUrl: `/api/cinematic/media?id=${encodeURIComponent(id)}&kind=video&token=${token}`,
+      });
+      return;
+    }
+
+    if (url.pathname === "/api/cinematic/media" && request.method === "GET") {
+      const media = previewMedia.get(url.searchParams.get("id") ?? "");
+      const kind = url.searchParams.get("kind");
+      if (media === undefined || (kind !== "thumbnail" && kind !== "video")) {
+        sendJson(response, 404, { error: "Preview media not found." });
+        return;
+      }
+      await streamLocalMedia(
+        request,
+        response,
+        kind === "video" ? media.videoPath : media.thumbnailPath,
+        kind === "video" ? "video/mp4" : "image/jpeg",
+      );
       return;
     }
 

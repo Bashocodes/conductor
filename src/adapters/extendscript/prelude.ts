@@ -279,10 +279,13 @@ function cdImportFootage(path) {
   return p.importFile(new ImportOptions(file));
 }
 
-function cdImportFootageLayer(comp, path, startTimeSeconds) {
+function cdImportFootageLayer(comp, path, startTimeSeconds, sourceTimeSeconds) {
   var footage = cdImportFootage(path);
   var layer = comp.layers.add(footage);
-  layer.startTime = startTimeSeconds;
+  var sourceOffset = (sourceTimeSeconds === undefined) ? 0 : sourceTimeSeconds;
+  layer.startTime = startTimeSeconds - sourceOffset;
+  layer.inPoint = startTimeSeconds;
+  layer.outPoint = comp.duration;
   layer.motionBlur = true;
   return layer;
 }
@@ -308,6 +311,11 @@ var CD_EFFECT_ALIASES = {
   "Exposure": "ADBE Exposure2",
   "Curves": "ADBE CurvesCustom",
   "Glow": "ADBE Glo2",
+  "Photo Filter": "ADBE Photo Filter",
+  "Tritone": "ADBE Tritone",
+  "Black & White": "ADBE Black&White",
+  "Noise": "ADBE Noise",
+  "Brightness & Contrast": "ADBE Brightness & Contrast 2",
   "Tint": "ADBE Tint",
   "Fill": "ADBE Fill",
   "Ramp": "ADBE Ramp",

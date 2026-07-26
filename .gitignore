@@ -43,6 +43,8 @@ runs/
 *.aac
 *.flac
 *.png
+!assets/
+!assets/sample-logo-transparent.png
 *.jpg
 *.jpeg
 *.tif

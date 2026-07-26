@@ -101,6 +101,51 @@ export const CONSOLE_HTML = String.raw`<!doctype html>
   .banner.warn { background: rgba(224,175,104,.1); border: 1px solid rgba(224,175,104,.35); color: #f3ddb6; }
   pre.render-log { max-height: 220px; margin-top: 10px; white-space: pre-wrap; }
   code { font-family: var(--mono); font-size: .93em; }
+
+  .lab-intro { margin-bottom: 16px; padding: 12px 13px; border: 1px solid rgba(122,162,247,.28);
+               border-radius: 9px; background: rgba(122,162,247,.06); color: var(--ink-2); font-size: 12px; }
+  .lab-section { margin-top: 17px; padding-top: 15px; border-top: 1px solid var(--line); }
+  .lab-section h3 { margin-bottom: 10px; color: var(--ink); font-size: 13px; font-weight: 650; }
+  .lab-section-note { margin: -6px 0 11px; color: var(--ink-3); font-size: 11px; }
+  .compact-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 12px; }
+  @media (max-width: 640px) { .compact-grid { grid-template-columns: 1fr; } }
+  .check-field { display: flex; align-items: center; gap: 8px; margin: 2px 0 13px; color: var(--ink-2); }
+  .check-field label { cursor: pointer; font-size: 12px; }
+  .brand-row { display: flex; gap: 8px; align-items: stretch; }
+  .brand-row select { min-width: 0; flex: 1; }
+
+  .look-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 9px; }
+  @media (max-width: 1100px) { .look-grid { grid-template-columns: repeat(3,minmax(0,1fr)); } }
+  @media (max-width: 640px) { .look-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+  .look-card { position: relative; overflow: hidden; min-height: 118px; padding: 0;
+               border: 1px solid var(--line); border-radius: 9px; background: #0f1116;
+               color: var(--ink); text-align: left; cursor: pointer; }
+  .look-card:hover { border-color: var(--line-2); }
+  .look-card[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .look-card img, .look-card video { display: block; width: 100%; height: 90px; object-fit: cover; background: #0b0c10; }
+  .look-placeholder { height: 90px; display: grid; place-items: center;
+                      background: radial-gradient(circle at 70% 20%, rgba(122,162,247,.18), transparent 42%),
+                                  linear-gradient(145deg,#171a22,#0d0f14); color: var(--ink-3); font: 10px var(--mono); }
+  .look-card b { display: block; padding: 7px 8px 1px; font-size: 11.5px; line-height: 1.2; }
+  .look-card span { display: block; min-height: 34px; padding: 2px 8px 8px; color: var(--ink-3); font-size: 9.5px; line-height: 1.35; }
+  .look-badge { position: absolute; top: 6px; right: 6px; padding: 2px 5px; border-radius: 99px;
+                background: rgba(8,9,12,.8); color: var(--ink-2); font: 9px var(--mono); }
+  .look-card[aria-pressed="true"] .look-badge { background: var(--accent); color: #0b1020; }
+
+  .preview-progress { margin-top: 10px; color: var(--ink-2); font-size: 11.5px; min-height: 18px; }
+  .preview-progress strong { color: var(--ink); }
+
+  .viewer { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center;
+            padding: 24px; background: rgba(3,4,7,.9); backdrop-filter: blur(12px); }
+  .viewer[hidden] { display: none; }
+  .viewer-shell { width: min(900px,96vw); max-height: 94vh; display: flex; flex-direction: column;
+                  border: 1px solid var(--line-2); border-radius: 13px; overflow: hidden; background: #090a0d; }
+  .viewer-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+                 border-bottom: 1px solid var(--line); }
+  .viewer-head b { flex: 1; }
+  .viewer video { display: block; width: 100%; max-height: calc(94vh - 100px); background: #000; }
+  .viewer-nav { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 10px; }
+  .viewer-nav .act { min-width: 42px; }
 </style>
 </head>
 <body>
@@ -148,6 +193,22 @@ export const CONSOLE_HTML = String.raw`<!doctype html>
   </div>
 </div>
 
+<div class="viewer" id="lookViewer" hidden role="dialog" aria-modal="true" aria-labelledby="viewerTitle">
+  <div class="viewer-shell">
+    <div class="viewer-head">
+      <b id="viewerTitle">Cinematic preview</b>
+      <button class="act" id="viewerFullscreen" type="button">Full screen</button>
+      <button class="act" id="viewerClose" type="button">Close</button>
+    </div>
+    <video id="viewerVideo" muted loop controls playsinline></video>
+    <div class="viewer-nav">
+      <button class="act" id="viewerPrev" type="button" aria-label="Previous look">←</button>
+      <span id="viewerCount" class="tag"></span>
+      <button class="act" id="viewerNext" type="button" aria-label="Next look">→</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const $ = (id) => document.getElementById(id);
 /* Minted per server start and injected here. Another origin cannot read this
@@ -157,6 +218,17 @@ const TOKEN = "__CONDUCTOR_SESSION_TOKEN__";
 let recipes = [];
 let selected = null;
 let running = false;
+const CINEMATIC_LOOKS = [
+  ["Clean Cinema", "Balanced contrast, restrained color and fine texture."],
+  ["Golden Hour", "Warm sunlight, protected highlights and healthy skin tones."],
+  ["Teal & Amber", "Cool shadows and warm highlights with controlled separation."],
+  ["Dream Bloom", "Soft highlight bloom with a delicate rose atmosphere."],
+  ["Film Noir", "Sculpted monochrome, silver tint and tactile grain."],
+  ["Neon Night", "Cyan-violet separation, deep night contrast and luminous glow."],
+  ["Bleach Bypass", "Lower color, harder contrast and a photochemical edge."],
+];
+let cinematicPreviews = {};
+let viewerIndex = 0;
 
 function setStatus(kind, text) {
   $("dot").className = "dot " + kind;
@@ -218,6 +290,266 @@ function humanLabel(name) {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase();
 }
 
+function savedLogoLibrary(defaultPath) {
+  try {
+    const stored = JSON.parse(localStorage.getItem("conductor.logoLibrary") || "[]");
+    const paths = Array.isArray(stored) ? stored.filter((value) => typeof value === "string") : [];
+    return [...new Set([defaultPath, ...paths])];
+  } catch {
+    return [defaultPath];
+  }
+}
+
+function storeLogoLibrary(paths) {
+  try { localStorage.setItem("conductor.logoLibrary", JSON.stringify(paths)); }
+  catch { /* the library is a convenience; recipe parameters remain authoritative */ }
+}
+
+function createParamControl(name, def) {
+  let control;
+  if (def.type === "enum") {
+    control = document.createElement("select");
+    for (const value of def.values) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      if (value === def.default) option.selected = true;
+      control.appendChild(option);
+    }
+  } else {
+    control = document.createElement("input");
+    control.type = def.type === "number"
+      ? "number"
+      : (def.type === "boolean" ? "checkbox" : "text");
+    if (def.type === "boolean") control.checked = Boolean(def.default);
+    else if (def.default !== undefined) control.value = String(def.default);
+    if (def.type === "number") {
+      if (def.min !== undefined) control.min = def.min;
+      if (def.max !== undefined) control.max = def.max;
+    }
+  }
+  control.id = "p_" + name;
+  control.dataset.kind = def.type;
+  control.addEventListener("input", () => {
+    if (def.path === "save-file") control.dataset.autoSuggested = "false";
+    if (selected && selected.id === "cinematic-look-lab" && name === "clip") {
+      cinematicPreviews = {};
+      renderLookCards();
+    }
+    updateReadiness();
+  });
+  return control;
+}
+
+function appendParamField(host, name, def, compact) {
+  const field = el("div", "field");
+  if (compact) field.classList.add("compact");
+  const required = def.default === undefined && def.type !== "boolean";
+  const control = createParamControl(name, def);
+  const label = el("label", null, humanLabel(name));
+  label.htmlFor = control.id;
+  if (required) label.appendChild(el("span", "req", " *"));
+  field.appendChild(label);
+
+  if (def.path) {
+    const row = el("div", "row");
+    row.appendChild(control);
+    const browse = el(
+      "button",
+      "browse",
+      def.path === "save-file" ? "Save as…" : "Choose…",
+    );
+    browse.type = "button";
+    browse.onclick = () => { void chooseFile(def, control); };
+    row.appendChild(browse);
+    field.appendChild(row);
+    if (def.path === "save-file") void suggestOutput(name, def, control);
+  } else {
+    field.appendChild(control);
+  }
+  if (def.description) field.appendChild(el("div", "hint", def.description));
+  host.appendChild(field);
+  return control;
+}
+
+function appendCheckField(host, name, def) {
+  const row = el("div", "check-field");
+  const control = createParamControl(name, def);
+  const label = el("label", null, def.description);
+  label.htmlFor = control.id;
+  row.appendChild(control);
+  row.appendChild(label);
+  host.appendChild(row);
+  return control;
+}
+
+function renderLookCards() {
+  const grid = $("lookGrid");
+  if (!grid) return;
+  const chosen = $("p_look") ? $("p_look").value : CINEMATIC_LOOKS[0][0];
+  grid.innerHTML = "";
+  CINEMATIC_LOOKS.forEach(([look, description], index) => {
+    const card = el("button", "look-card");
+    card.type = "button";
+    card.dataset.look = look;
+    card.setAttribute("aria-pressed", String(chosen === look));
+    const preview = cinematicPreviews[look];
+    if (preview) {
+      const video = document.createElement("video");
+      video.src = preview.videoUrl;
+      video.poster = preview.thumbnailUrl;
+      video.preload = "auto";
+      video.muted = true;
+      video.playsInline = true;
+      video.setAttribute("aria-label", look + " preview");
+      card.appendChild(video);
+    } else {
+      card.appendChild(el("div", "look-placeholder", "preview not generated"));
+    }
+    card.appendChild(el("b", null, look));
+    card.appendChild(el("span", null, description));
+    card.appendChild(el("span", "look-badge", chosen === look ? "SELECTED" : String(index + 1)));
+    card.onclick = () => {
+      $("p_look").value = look;
+      renderLookCards();
+      updateReadiness();
+      if (cinematicPreviews[look]) openLookViewer(index);
+    };
+    grid.appendChild(card);
+  });
+}
+
+function renderCinematicParams() {
+  const defs = selected.params;
+  const host = $("params");
+  host.innerHTML = "";
+  host.appendChild(el(
+    "div",
+    "lab-intro",
+    "Generate all seven two-second comparisons from the same representative moment. "
+      + "Choose in the gallery, inspect it larger with arrow navigation, then render only the winner.",
+  ));
+
+  appendParamField(host, "clip", defs.clip);
+  appendParamField(host, "strength", defs.strength);
+
+  const look = document.createElement("input");
+  look.type = "hidden";
+  look.id = "p_look";
+  look.dataset.kind = "enum";
+  look.value = defs.look.default;
+  host.appendChild(look);
+  const renderMode = document.createElement("input");
+  renderMode.type = "hidden";
+  renderMode.id = "p_renderMode";
+  renderMode.dataset.kind = "enum";
+  renderMode.value = "Full";
+  host.appendChild(renderMode);
+
+  const lookSection = el("div", "lab-section");
+  lookSection.appendChild(el("h3", null, "Seven-look comparison"));
+  lookSection.appendChild(el(
+    "div",
+    "lab-section-note",
+    "Every sample uses the exact AE-native effect chain and HLG pipeline used by the final render.",
+  ));
+  const grid = el("div", "look-grid");
+  grid.id = "lookGrid";
+  lookSection.appendChild(grid);
+  const progress = el("div", "preview-progress");
+  progress.id = "previewProgress";
+  lookSection.appendChild(progress);
+  host.appendChild(lookSection);
+
+  const branding = el("div", "lab-section");
+  branding.appendChild(el("h3", null, "Project branding"));
+  branding.appendChild(el(
+    "div",
+    "lab-section-note",
+    "Brand layers sit above the grade, so their identity colors remain stable.",
+  ));
+  appendCheckField(branding, "logoEnabled", defs.logoEnabled);
+
+  const logoField = el("div", "field");
+  const logoLabel = el("label", null, "Logo library");
+  logoLabel.htmlFor = "p_logoPath";
+  logoField.appendChild(logoLabel);
+  const logoRow = el("div", "brand-row");
+  const logoSelect = document.createElement("select");
+  logoSelect.id = "p_logoPath";
+  logoSelect.dataset.kind = "string";
+  const logos = savedLogoLibrary(defs.logoPath.default);
+  for (const path of logos) {
+    const option = document.createElement("option");
+    option.value = path;
+    option.textContent = path.split("/").pop();
+    logoSelect.appendChild(option);
+  }
+  logoSelect.addEventListener("input", updateReadiness);
+  logoRow.appendChild(logoSelect);
+  const addLogo = el("button", "browse", "Add logo…");
+  addLogo.type = "button";
+  addLogo.onclick = async () => {
+    try {
+      const result = await api("/api/choose", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          mode: "open-file",
+          prompt: "Choose a transparent logo image",
+        }),
+      });
+      if (!result.path) return;
+      const updated = [...new Set([...savedLogoLibrary(defs.logoPath.default), result.path])];
+      storeLogoLibrary(updated);
+      const option = document.createElement("option");
+      option.value = result.path;
+      option.textContent = result.path.split("/").pop();
+      logoSelect.appendChild(option);
+      logoSelect.value = result.path;
+      updateReadiness();
+    } catch (error) {
+      banner("bad", escapeHtml(error.message));
+    }
+  };
+  logoRow.appendChild(addLogo);
+  logoField.appendChild(logoRow);
+  logoField.appendChild(el(
+    "div",
+    "hint",
+    "The bundled Sample mark is ready; added logo paths stay in this browser’s local library.",
+  ));
+  branding.appendChild(logoField);
+
+  const logoGrid = el("div", "compact-grid");
+  appendParamField(logoGrid, "logoPosition", defs.logoPosition, true);
+  appendParamField(logoGrid, "logoWidthPercent", defs.logoWidthPercent, true);
+  appendParamField(logoGrid, "logoVisibility", defs.logoVisibility, true);
+  appendParamField(logoGrid, "logoXPercent", defs.logoXPercent, true);
+  appendParamField(logoGrid, "logoYPercent", defs.logoYPercent, true);
+  branding.appendChild(logoGrid);
+
+  appendCheckField(branding, "watermarkEnabled", defs.watermarkEnabled);
+  const watermarkGrid = el("div", "compact-grid");
+  appendParamField(watermarkGrid, "watermarkText", defs.watermarkText, true);
+  appendParamField(watermarkGrid, "watermarkFont", defs.watermarkFont, true);
+  appendParamField(watermarkGrid, "watermarkVisibility", defs.watermarkVisibility, true);
+  appendParamField(watermarkGrid, "watermarkMotion", defs.watermarkMotion, true);
+  appendParamField(watermarkGrid, "watermarkSpeed", defs.watermarkSpeed, true);
+  branding.appendChild(watermarkGrid);
+  host.appendChild(branding);
+
+  const delivery = el("div", "lab-section");
+  delivery.appendChild(el("h3", null, "Selected-look delivery"));
+  appendParamField(delivery, "outputPath", defs.outputPath);
+  host.appendChild(delivery);
+
+  $("btnDry").textContent = "Generate 7 previews";
+  $("btnRun").textContent = "Render selected look";
+  renderLookCards();
+  updateReadiness();
+}
+
 async function chooseFile(def, control) {
   try {
     const result = await api("/api/choose", {
@@ -232,6 +564,14 @@ async function chooseFile(def, control) {
     if (result.path) {
       control.value = result.path;
       if (def.path === "save-file") control.dataset.autoSuggested = "false";
+      if (
+        selected &&
+        selected.id === "cinematic-look-lab" &&
+        control.id === "p_clip"
+      ) {
+        cinematicPreviews = {};
+        renderLookCards();
+      }
       updateReadiness();
     }
   } catch (error) {
@@ -284,6 +624,12 @@ function updateReadiness() {
 function renderParams() {
   if (!selected) return;
   $("paramsTitle").textContent = selected.title;
+  if (selected.id === "cinematic-look-lab") {
+    renderCinematicParams();
+    return;
+  }
+  $("btnDry").textContent = "Preview plan";
+  $("btnRun").textContent = "Build & render";
   const host = $("params");
   host.innerHTML = "";
   for (const [name, def] of Object.entries(selected.params)) {
@@ -543,10 +889,235 @@ function startRender(queued) {
   };
 }
 
+function runRecipeOnce(params, onStep) {
+  return new Promise((resolve, reject) => {
+    const source = new EventSource(
+      "/api/run?token=" + encodeURIComponent(TOKEN)
+        + "&recipe=" + encodeURIComponent(selected.id)
+        + "&params=" + encodeURIComponent(JSON.stringify(params)),
+    );
+    let settled = false;
+    let stepFailure = "";
+    source.addEventListener("step", (event) => {
+      const step = JSON.parse(event.data);
+      if (step.status === "failed" && step.error && step.error.message) {
+        stepFailure = step.id + ": " + step.error.message;
+      }
+      if (onStep) onStep(step);
+    });
+    source.addEventListener("done", (event) => {
+      settled = true;
+      source.close();
+      const payload = JSON.parse(event.data);
+      if (payload.status === "completed") {
+        resolve(Array.isArray(payload.queued) ? payload.queued : []);
+      } else {
+        reject(new Error(
+          (payload.error || "After Effects could not build the preview.")
+            + (stepFailure ? " — " + stepFailure : "")
+            + (Array.isArray(payload.fieldErrors) && payload.fieldErrors.length
+              ? " " + payload.fieldErrors.join("; ")
+              : ""),
+        ));
+      }
+    });
+    source.onerror = () => {
+      if (settled) return;
+      settled = true;
+      source.close();
+      reject(new Error("Lost the connection while building the preview."));
+    };
+  });
+}
+
+function renderQueuedOnce(queued, onStatus) {
+  return new Promise((resolve, reject) => {
+    const indices = queued.map((entry) => entry.renderQueueIndex);
+    if (
+      indices.length === 0 ||
+      indices.some((index) => !Number.isInteger(index) || index < 1)
+    ) {
+      reject(new Error("Conductor did not receive an exact Adobe render queue item."));
+      return;
+    }
+    const source = new EventSource(
+      "/api/render?token=" + encodeURIComponent(TOKEN)
+        + "&indices=" + encodeURIComponent(indices.join(",")),
+    );
+    let settled = false;
+    source.addEventListener("item", (event) => {
+      if (onStatus) onStatus(JSON.parse(event.data));
+    });
+    source.addEventListener("done", (event) => {
+      settled = true;
+      source.close();
+      const payload = JSON.parse(event.data);
+      if (payload.status === "completed") resolve(payload);
+      else reject(new Error(
+        (payload.error || "Adobe could not render the preview.")
+          + (payload.tail ? "\n" + payload.tail : ""),
+      ));
+    });
+    source.onerror = () => {
+      if (settled) return;
+      settled = true;
+      source.close();
+      reject(new Error("Lost the connection while rendering the preview."));
+    };
+  });
+}
+
+function setPreviewProgress(message, strong) {
+  const progress = $("previewProgress");
+  if (!progress) return;
+  progress.innerHTML = "";
+  if (strong) progress.appendChild(el("strong", null, strong));
+  if (message) progress.appendChild(document.createTextNode((strong ? " " : "") + message));
+}
+
+async function generateCinematicPreviews() {
+  running = true;
+  updateReadiness();
+  cinematicPreviews = {};
+  renderLookCards();
+  $("outTitle").textContent = "Cinematic preview laboratory";
+  $("out").innerHTML =
+    '<div class="banner warn"><b>Building seven real After Effects samples.</b> '
+    + "Each look is rendered and color-managed individually; this is not a CSS mock-up.</div>";
+  const baseParams = collectParams();
+  const originalLook = baseParams.look || CINEMATIC_LOOKS[0][0];
+  try {
+    for (let index = 0; index < CINEMATIC_LOOKS.length; index += 1) {
+      const look = CINEMATIC_LOOKS[index][0];
+      setPreviewProgress(
+        "Building " + look + " in After Effects…",
+        "Look " + (index + 1) + " of " + CINEMATIC_LOOKS.length + ".",
+      );
+      const output = await api(
+        "/api/cinematic/preview-output?look=" + encodeURIComponent(look),
+      );
+      const params = Object.assign({}, baseParams, {
+        look,
+        renderMode: "Preview",
+        outputPath: output.path,
+      });
+      let latestStep = "";
+      const queued = await runRecipeOnce(params, (step) => {
+        if (step.status === "running" || step.status === "succeeded") latestStep = step.id;
+        setPreviewProgress(
+          "Building " + look + (latestStep ? " · " + latestStep : "") + "…",
+          "Look " + (index + 1) + " of " + CINEMATIC_LOOKS.length + ".",
+        );
+      });
+      await renderQueuedOnce(queued, (status) => {
+        setPreviewProgress(
+          status.status === "encoding"
+            ? "Encoding the verified HLG sample for " + look + "…"
+            : "Adobe is rendering " + look + "…",
+          "Look " + (index + 1) + " of " + CINEMATIC_LOOKS.length + ".",
+        );
+      });
+      const registered = await api("/api/cinematic/register-preview", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ look, path: output.path }),
+      });
+      cinematicPreviews[look] = registered;
+      renderLookCards();
+    }
+    $("p_look").value = originalLook;
+    $("p_renderMode").value = "Full";
+    renderLookCards();
+    setPreviewProgress(
+      "Click any thumbnail to inspect it larger. Use ← and → to compare.",
+      "All seven previews are ready.",
+    );
+    $("out").innerHTML =
+      '<div class="banner ok"><b>Seven-look comparison complete.</b> '
+      + "Select a look in the gallery, inspect it at larger size, then use "
+      + "<b>Render selected look</b> for the full source.</div>";
+  } catch (error) {
+    $("p_renderMode").value = "Full";
+    setPreviewProgress("The completed thumbnails remain available.", "Preview generation stopped.");
+    $("out").innerHTML =
+      '<div class="banner bad"><b>Could not finish all seven previews.</b> '
+      + escapeHtml(error.message) + "</div>";
+  } finally {
+    finishInteraction();
+  }
+}
+
+function nextAvailablePreview(start, direction) {
+  let index = start;
+  for (let count = 0; count < CINEMATIC_LOOKS.length; count += 1) {
+    index = (index + direction + CINEMATIC_LOOKS.length) % CINEMATIC_LOOKS.length;
+    if (cinematicPreviews[CINEMATIC_LOOKS[index][0]]) return index;
+  }
+  return start;
+}
+
+function updateLookViewer() {
+  const look = CINEMATIC_LOOKS[viewerIndex][0];
+  const preview = cinematicPreviews[look];
+  if (!preview) return;
+  $("viewerTitle").textContent = look;
+  $("viewerCount").textContent =
+    (viewerIndex + 1) + " / " + CINEMATIC_LOOKS.length + " · " + look;
+  const video = $("viewerVideo");
+  if (video.src !== new URL(preview.videoUrl, location.href).href) {
+    video.src = preview.videoUrl;
+    video.load();
+  }
+  $("p_look").value = look;
+  renderLookCards();
+  void video.play().catch(() => undefined);
+}
+
+function openLookViewer(index) {
+  viewerIndex = index;
+  $("lookViewer").hidden = false;
+  updateLookViewer();
+}
+
+function closeLookViewer() {
+  $("lookViewer").hidden = true;
+  const video = $("viewerVideo");
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+}
+
+$("viewerClose").onclick = closeLookViewer;
+$("viewerPrev").onclick = () => {
+  viewerIndex = nextAvailablePreview(viewerIndex, -1);
+  updateLookViewer();
+};
+$("viewerNext").onclick = () => {
+  viewerIndex = nextAvailablePreview(viewerIndex, 1);
+  updateLookViewer();
+};
+$("viewerFullscreen").onclick = () => {
+  const video = $("viewerVideo");
+  if (video.requestFullscreen) void video.requestFullscreen();
+};
+$("lookViewer").addEventListener("click", (event) => {
+  if (event.target === $("lookViewer")) closeLookViewer();
+});
+document.addEventListener("keydown", (event) => {
+  if ($("lookViewer").hidden) return;
+  if (event.key === "Escape") closeLookViewer();
+  if (event.key === "ArrowLeft") $("viewerPrev").click();
+  if (event.key === "ArrowRight") $("viewerNext").click();
+});
+
 $("btnDoctor").onclick = checkDoctor;
 $("btnPrivacyClean").onclick = () => { void startPrivacyClean(); };
 
 $("btnDry").onclick = async () => {
+  if (selected && selected.id === "cinematic-look-lab") {
+    await generateCinematicPreviews();
+    return;
+  }
   $("outTitle").textContent = "Planned steps — nothing was touched";
   $("out").innerHTML = '<div class="empty">Resolving…</div>';
   try {

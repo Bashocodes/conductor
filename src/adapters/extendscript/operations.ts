@@ -85,6 +85,7 @@ function renderCreateComp(args: ToolArgs<"createComp">): string {
 }
 
 const SIZE_PRESETS: Record<string, number> = {
+  watermark: 28,
   small: 48,
   medium: 84,
   large: 148,
@@ -124,7 +125,51 @@ function renderAddTextLayer(args: ToolArgs<"addTextLayer">): string {
   layer.property("ADBE Transform Group").property("ADBE Position").setValue(${es3Literal(
     args.position as unknown as JsonValue,
   )});
+  layer.property("ADBE Transform Group").property("ADBE Opacity").setValue(${args.opacity});
   return { layerId: String(layer.id), name: layer.name, index: layer.index, compId: String(comp.id), font: fontResult };`,
+  );
+}
+
+function renderAddMediaLayer(args: ToolArgs<"addMediaLayer">): string {
+  return wrap(
+    "add media layer",
+    `  var comp = cdComp(${es3Literal(args.compId)});
+  var footage = cdImportFootage(${es3Literal(args.path)});
+  if (!footage.hasVideo || footage.width <= 0) {
+    throw new Error("Brand media must be an image or video with dimensions.");
+  }
+  var layer = comp.layers.add(footage);
+  layer.name = ${es3Literal(args.name)};
+  layer.motionBlur = ${args.motionBlur ? "true" : "false"};
+  layer.startTime = 0;
+  layer.inPoint = 0;
+  layer.outPoint = comp.duration;
+
+  var targetWidth = comp.width * (${args.widthPercent} / 100);
+  var scalePercent = (targetWidth / footage.width) * 100;
+  var scaleProp = layer.property("ADBE Transform Group").property("ADBE Scale");
+  var scaleValue = scaleProp.value;
+  var scaled = [];
+  for (var s = 0; s < scaleValue.length; s++) { scaled.push(scalePercent); }
+  scaleProp.setValue(scaled);
+
+  var preset = ${es3Literal(args.positionPreset)};
+  var xPercent = ${args.customXPercent};
+  var yPercent = ${args.customYPercent};
+  if (preset === "Top Right") { xPercent = 92.2222; yPercent = 6.5625; }
+  if (preset === "Top Left") { xPercent = 7.7778; yPercent = 6.5625; }
+  if (preset === "Bottom Right") { xPercent = 92.2222; yPercent = 93.4375; }
+  if (preset === "Bottom Left") { xPercent = 7.7778; yPercent = 93.4375; }
+  layer.property("ADBE Transform Group").property("ADBE Position")
+    .setValue([comp.width * xPercent / 100, comp.height * yPercent / 100]);
+  layer.property("ADBE Transform Group").property("ADBE Opacity").setValue(${args.opacity});
+  return {
+    layerId: String(layer.id),
+    name: layer.name,
+    widthPixels: targetWidth,
+    position: [xPercent, yPercent],
+    opacity: ${args.opacity}
+  };`,
   );
 }
 
@@ -146,12 +191,20 @@ function renderSetKeyframes(args: ToolArgs<"setKeyframes">): string {
   var rawTimes = ${es3Literal(times)};
   var values = ${es3Literal(values as JsonValue[])};
   var mode = ${es3Literal(args.timeMode)};
+  var coordinateSpace = ${es3Literal(args.coordinateSpace ?? "pixels")};
   var span = comp.duration;
 
   // Normalized time lets a recipe describe a shape that holds at any duration.
   var times = [];
   for (var i = 0; i < rawTimes.length; i++) {
     times.push((mode === "normalized") ? (rawTimes[i] * span) : rawTimes[i]);
+  }
+  if (coordinateSpace === "normalized-comp" && ${es3Literal(args.property)} === "position") {
+    for (var v = 0; v < values.length; v++) {
+      if (values[v] instanceof Array && values[v].length >= 2) {
+        values[v] = [values[v][0] * comp.width, values[v][1] * comp.height];
+      }
+    }
   }
 
   // cdApplyTrack writes the keys and eases every one of them. Linear keyframes
@@ -213,7 +266,12 @@ function renderPrecompose(args: ToolArgs<"precompose">): string {
   // layers addressed by id. A transition recipe describes the clips it needs
   // this way, so precompose without import would leave it nothing to work on.
   for (var s = 0; s < sources.length; s++) {
-    var layer = cdImportFootageLayer(comp, sources[s].path, sources[s].startTimeSeconds);
+    var layer = cdImportFootageLayer(
+      comp,
+      sources[s].path,
+      sources[s].startTimeSeconds,
+      sources[s].sourceTimeSeconds
+    );
     indices.push(layer.index);
     imported.push({ path: sources[s].path, role: sources[s].role, layerId: String(layer.id) });
   }
@@ -386,6 +444,8 @@ function renderProjectInfo(args: ToolArgs<"projectInfo">): string {
     pixelAspect: footage.pixelAspect,
     frameRate: footage.frameRate,
     durationSeconds: footage.duration,
+    previewDurationSeconds: Math.min(2, footage.duration),
+    representativeTimeSeconds: Math.max(0, (footage.duration - Math.min(2, footage.duration)) / 2),
     hasVideo: footage.hasVideo,
     hasAudio: footage.hasAudio,
     // Colour management state matters for an HDR grade, so report the project
@@ -424,6 +484,7 @@ const RENDERERS: {
 } = {
   createComp: renderCreateComp,
   addTextLayer: renderAddTextLayer,
+  addMediaLayer: renderAddMediaLayer,
   setKeyframes: renderSetKeyframes,
   applyEffect: renderApplyEffect,
   precompose: renderPrecompose,

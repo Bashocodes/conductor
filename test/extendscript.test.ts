@@ -66,6 +66,20 @@ const KEYFRAMES = {
 const ALL_OPERATIONS: Array<[ToolOperation, Record<string, JsonValue>]> = [
   ["createComp", CREATE_COMP],
   ["addTextLayer", TEXT_LAYER as unknown as Record<string, JsonValue>],
+  [
+    "addMediaLayer",
+    {
+      compId: "27",
+      path: "/tmp/logo.png",
+      name: "Brand Logo",
+      widthPercent: 5.93,
+      positionPreset: "Top Right",
+      customXPercent: 92.22,
+      customYPercent: 6.56,
+      opacity: 50,
+      motionBlur: false,
+    },
+  ],
   ["setKeyframes", KEYFRAMES as unknown as Record<string, JsonValue>],
   [
     "applyEffect",
@@ -196,6 +210,56 @@ describe("craft rules are not optional", () => {
 
   it("creates compositions with motion blur already enabled", () => {
     expect(script("createComp", CREATE_COMP)).toContain("comp.motionBlur = true;");
+  });
+
+  it("sizes and positions a logo relative to the composition", () => {
+    const source = script("addMediaLayer", {
+      compId: "27",
+      path: "/tmp/logo.png",
+      name: "Brand Logo",
+      widthPercent: 5.93,
+      positionPreset: "Top Right",
+      customXPercent: 92.22,
+      customYPercent: 6.56,
+      opacity: 50,
+      motionBlur: false,
+    });
+    expect(source).toContain("comp.width * (5.93 / 100)");
+    expect(source).toContain("xPercent = 92.2222");
+    expect(source).toContain("ADBE Opacity");
+  });
+
+  it("converts normalized watermark positions into comp coordinates", () => {
+    const source = script("setKeyframes", {
+      ...KEYFRAMES,
+      timeMode: "normalized",
+      coordinateSpace: "normalized-comp",
+      keyframes: [
+        { time: 0, value: [0.18, 0.18] },
+        { time: 1, value: [0.82, 0.76] },
+      ],
+    } as unknown as Record<string, JsonValue>);
+    expect(source).toContain('coordinateSpace === "normalized-comp"');
+    expect(source).toContain("values[v][0] * comp.width");
+    expect(source).toContain("values[v][1] * comp.height");
+  });
+
+  it("offsets preview footage to a representative source time", () => {
+    const source = script("precompose", {
+      compId: "27",
+      name: "Preview",
+      sources: [{
+        path: "/tmp/clip.mp4",
+        role: "source",
+        startTimeSeconds: 0,
+        sourceTimeSeconds: 8.5,
+      }],
+      layerIds: [],
+      collapseTransformations: false,
+      motionBlur: false,
+    });
+    expect(source).toContain("startTimeSeconds - sourceOffset");
+    expect(source).toContain("sources[s].sourceTimeSeconds");
   });
 
   it("guards every itemByID lookup", () => {

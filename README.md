@@ -8,14 +8,12 @@ and verified renders. No AI required; bring one if you want.
 
 Conductor is an MCP client and recipe engine. It does not replace an Adobe MCP
 server, bundle Adobe automation code, or require a model to execute a recipe.
-The current release is `0.1.0-alpha.0`. Two of the three reference recipes —
-`title-card` and `motivated-transition` — have been run end to end against a
-live **After Effects 26.3** over an `execute_extend_script` MCP server, and the
-easing, motion blur and overshoot they produce were read back out of the
-application and checked. `hdr-safe-grade` reaches its colour-configuration step;
-that step deliberately refuses to change a project's working space without an
-explicit opt-in, because doing so reinterprets every composition already in the
-project.
+The current release is `0.1.0-alpha.0`. All four reference recipes have been
+run against a live **After Effects 26.3** over an `execute_extend_script` MCP
+server. The title and transition motion was read back from the host; the HDR
+recipe was rendered through a 10-bit ProRes HLG intermediate and validated as
+HEVC Main 10 BT.2020/HLG; and the cinematic laboratory produced all seven
+two-second comparisons through the same verified pipeline.
 
 Only After Effects has been exercised against a real host. The Photoshop,
 Premiere and Illustrator paths remain unproven.
@@ -110,7 +108,7 @@ the final render handoff.
 
 ## Reference recipes
 
-All three alpha recipes target the logical `aftereffects` server and end with
+All four alpha recipes target the logical `aftereffects` server and end with
 an explicit, verified render queue operation. The excerpts below are abridged
 from their deterministic dry-run plans.
 
@@ -171,6 +169,46 @@ queue-verified-10bit-hlg-render      queueRender    /renders/hlg.mov
 
 See [`docs/RECIPES.md`](docs/RECIPES.md) for the complete plans and recipe
 authoring tutorial.
+
+The deterministic frame-quantization and event-assignment foundation for the
+next Beat Sync Studio is documented in
+[`docs/BEAT_SYNC.md`](docs/BEAT_SYNC.md). It deliberately separates music
+analysis from AE execution and does not claim beat sync until the Adobe marker
+pass has been reconciled and saved.
+
+### `cinematic-look-lab`
+
+Creates a controlled comparison from one representative two-second source
+window, then renders the chosen treatment across the complete clip. The seven
+AE-native looks are Clean Cinema, Golden Hour, Teal & Amber, Dream Bloom, Film
+Noir, Neon Night, and Bleach Bypass. Previews and finals share the same
+32-bpc HLG composition and effect chain; only duration and source offset differ.
+
+The console presents real rendered previews in a seven-card gallery. A card
+opens a larger looping viewer with left/right keyboard navigation and a
+fullscreen control. Its viewing proxy is ColorSync tone-mapped to BT.709 for
+the browser; the untouched delivery remains verified 10-bit HLG.
+
+Branding is built as editable After Effects layers above the grade:
+
+- a local multi-logo library with position, custom coordinates, relative size,
+  and visibility controls;
+- the bundled Sample logo at the established top-right safe position; and
+- an editable `sample_` watermark with font, visibility, motion rhythm, and
+  speed controls. Its default 10% visibility means 90% transparency.
+
+```text
+inspect-cinematic-source             projectInfo
+configure-cinematic-hlg-project      projectInfo
+build-cinematic-composition          createComp     Preview / Full
+prepare-cinematic-source             precompose     representative offset
+cinematic-hdr-*                      applyEffect    Natural / Vivid / Impact
+<selected-look-effects>              applyEffect    one of seven chains
+place-project-logo                   addMediaLayer  optional
+add-moving-watermark                 addTextLayer   optional
+animate-moving-watermark             setKeyframes   closed safe-area path
+queue-cinematic-hlg-render           queueRender    validated HEVC HLG
+```
 
 ### Privacy Clean Copy
 

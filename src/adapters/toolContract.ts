@@ -5,6 +5,7 @@ import { jsonValueSchema } from "../schema/json.js";
 export const toolOperationSchema = z.enum([
   "createComp",
   "addTextLayer",
+  "addMediaLayer",
   "setKeyframes",
   "applyEffect",
   "precompose",
@@ -54,10 +55,31 @@ const addTextLayerArgsSchema = z
     name: z.string().min(1),
     text: z.string().min(1),
     font: z.string().min(1),
-    sizePreset: z.enum(["small", "medium", "large"]),
+    sizePreset: z.enum(["watermark", "small", "medium", "large"]),
     alignment: z.enum(["left", "center", "right"]),
     position: z.tuple([z.number().finite(), z.number().finite()]),
     color: z.string().min(1),
+    opacity: z.number().min(0).max(100).default(100),
+    motionBlur: z.boolean(),
+  })
+  .strict();
+
+const addMediaLayerArgsSchema = z
+  .object({
+    compId: z.string().min(1),
+    path: z.string().min(1),
+    name: z.string().min(1),
+    widthPercent: z.number().positive().max(100),
+    positionPreset: z.enum([
+      "Top Right",
+      "Top Left",
+      "Bottom Right",
+      "Bottom Left",
+      "Custom",
+    ]),
+    customXPercent: z.number().min(0).max(100),
+    customYPercent: z.number().min(0).max(100),
+    opacity: z.number().min(0).max(100),
     motionBlur: z.boolean(),
   })
   .strict();
@@ -67,6 +89,7 @@ const setKeyframesArgsSchema = z
     layerId: z.string().min(1),
     property: z.string().min(1),
     timeMode: z.enum(["seconds", "normalized"]),
+    coordinateSpace: z.enum(["pixels", "normalized-comp"]).optional(),
     keyframes: z
       .array(
         z
@@ -97,6 +120,7 @@ const sourceSchema = z
     path: z.string().min(1),
     role: z.string().min(1),
     startTimeSeconds: z.number().nonnegative(),
+    sourceTimeSeconds: z.number().nonnegative().default(0),
   })
   .strict();
 
@@ -136,6 +160,7 @@ const projectInfoArgsSchema = z
 export const toolArgsSchemas = {
   createComp: createCompArgsSchema,
   addTextLayer: addTextLayerArgsSchema,
+  addMediaLayer: addMediaLayerArgsSchema,
   setKeyframes: setKeyframesArgsSchema,
   applyEffect: applyEffectArgsSchema,
   precompose: precomposeArgsSchema,
@@ -150,6 +175,10 @@ export interface ToolContract {
   };
   addTextLayer: {
     args: z.infer<typeof addTextLayerArgsSchema>;
+    result: { layerId: string };
+  };
+  addMediaLayer: {
+    args: z.infer<typeof addMediaLayerArgsSchema>;
     result: { layerId: string };
   };
   setKeyframes: {
