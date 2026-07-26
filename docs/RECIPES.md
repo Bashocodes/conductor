@@ -144,7 +144,13 @@ share the same cut center at three seconds:
 
 ## Reference 3: `hdr-safe-grade`
 
-This is a technical normalization recipe, not a look:
+This recipe keeps the approved HLG technical path and exposes three bounded
+creative strengths:
+
+- `Natural HDR` is the preselected choice and reproduces the established look.
+- `Vivid HDR` adds a moderate exposure, contrast, and color lift.
+- `Impact HDR` makes the HDR character clearly noticeable without using an
+  unbounded or destructive grade.
 
 1. `inspect-source-metadata` gets dimensions, frame rate, duration, and color
    metadata.
@@ -153,11 +159,15 @@ This is a technical normalization recipe, not a look:
    a failed step, not a green check.
 3. `build-source-matched-composition` preserves source geometry and timing.
 4. `prepare-source-for-technical-grade` isolates the source.
-5. `bounded-exposure-normalization` starts neutral and declares a maximum
-   ±1-stop adjustment range.
-6. `broadcast-safe-levels-clamp` leaves gamma neutral, protects black, and
-   caps output white conservatively.
-7. `queue-verified-10bit-hlg-render` requires the installed
+5. `bounded-exposure-normalization` selects the strength's bounded exposure
+   and gamma values. Natural remains exactly neutral.
+6. `broadcast-safe-levels-clamp` protects black in every mode. Natural keeps
+   the established white clamp; Vivid and Impact preserve 32-bpc over-range
+   highlight values.
+7. `controlled-color-separation` is skipped for Natural. Vivid and Impact use
+   bounded Vibrance and Saturation controls to separate color without a broad
+   hue shift.
+8. `queue-verified-10bit-hlg-render` requires the installed
    `IG HDR HLG ProRes` output module instead of silently accepting AE's default
    H.264 module. Conductor renders that 10-bit intermediate, encodes HEVC Main
    10 with BT.2020/HLG tags, and probes the delivered file before reporting

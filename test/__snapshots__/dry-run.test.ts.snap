@@ -5,7 +5,7 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
   "params": {
     "clip": "/media/source.mov",
     "outputPath": "/renders/hlg-master.mp4",
-    "target": "hlg",
+    "strength": "Natural HDR",
   },
   "recipeId": "hdr-safe-grade",
   "steps": [
@@ -105,7 +105,7 @@ exports[`reference recipe dry runs > snapshots the hdr-safe-grade checklist 1`] 
         "durationSeconds": "\${steps.inspect-source-metadata.result.structuredContent.durationSeconds}",
         "frameRate": "\${steps.inspect-source-metadata.result.structuredContent.frameRate}",
         "height": "\${steps.inspect-source-metadata.result.structuredContent.height}",
-        "name": "Conductor HLG Technical Master",
+        "name": "Conductor Natural HDR Technical Master",
         "pixelAspect": 1,
         "width": "\${steps.inspect-source-metadata.result.structuredContent.width}",
       },

@@ -4,7 +4,7 @@ export const hdrSafeGradeRecipe = recipeSchema.parse({
   id: "hdr-safe-grade",
   title: "HDR-Safe Technical Grade",
   description:
-    "Color-manages SDR footage into HLG and delivers a verified 10-bit HEVC HDR file.",
+    "Color-manages SDR footage into HLG at Natural, Vivid, or Impact intensity and delivers a verified 10-bit HEVC HDR file.",
   targetServers: ["aftereffects"],
   params: {
     clip: {
@@ -13,11 +13,11 @@ export const hdrSafeGradeRecipe = recipeSchema.parse({
       minLength: 1,
       path: "open-file",
     },
-    target: {
+    strength: {
       type: "enum",
-      description: "Target HDR transfer function.",
-      values: ["hlg"],
-      default: "hlg",
+      description: "Creative HDR intensity. Natural preserves the established look.",
+      values: ["Natural HDR", "Vivid HDR", "Impact HDR"],
+      default: "Natural HDR",
     },
     outputPath: {
       type: "string",
@@ -91,7 +91,7 @@ export const hdrSafeGradeRecipe = recipeSchema.parse({
       server: "aftereffects",
       operation: "createComp",
       args: {
-        name: "Conductor HLG Technical Master",
+        name: "Conductor ${params.strength} Technical Master",
         width:
           "${steps.inspect-source-metadata.result.structuredContent.width}",
         height:
@@ -153,9 +153,23 @@ export const hdrSafeGradeRecipe = recipeSchema.parse({
           "${steps.prepare-source-for-technical-grade.result.structuredContent.layerId}",
         effect: "Exposure",
         settings: {
-          Exposure: 0,
+          Exposure: {
+            $select: "${params.strength}",
+            cases: {
+              "Natural HDR": 0,
+              "Vivid HDR": 0.12,
+              "Impact HDR": 0.3,
+            },
+          },
           Offset: 0,
-          "Gamma Correction": 1,
+          "Gamma Correction": {
+            $select: "${params.strength}",
+            cases: {
+              "Natural HDR": 1,
+              "Vivid HDR": 0.97,
+              "Impact HDR": 0.9,
+            },
+          },
         },
         atTimeSeconds: 0,
         durationSeconds:
@@ -185,13 +199,29 @@ export const hdrSafeGradeRecipe = recipeSchema.parse({
           "${steps.prepare-source-for-technical-grade.result.structuredContent.layerId}",
         effect: "Levels",
         settings: {
-          "Input Black": 0,
+          "Input Black": {
+            $select: "${params.strength}",
+            cases: {
+              "Natural HDR": 0,
+              "Vivid HDR": 0.003,
+              "Impact HDR": 0.008,
+            },
+          },
           "Input White": 1,
           Gamma: 1,
           "Output Black": 0,
           "Output White": 1,
           "Clip To Output Black": 1,
-          "Clip To Output White": 1,
+          // After Effects Levels: 1 clips to output white; 2 preserves
+          // over-range highlight values in a 32-bpc project.
+          "Clip To Output White": {
+            $select: "${params.strength}",
+            cases: {
+              "Natural HDR": 1,
+              "Vivid HDR": 2,
+              "Impact HDR": 2,
+            },
+          },
         },
         atTimeSeconds: 0,
         durationSeconds:
@@ -206,6 +236,52 @@ export const hdrSafeGradeRecipe = recipeSchema.parse({
             required: ["appliedParameterCount", "refusedParameters"],
             properties: {
               appliedParameterCount: { type: "number", equals: 7 },
+              refusedParameters: { type: "array", equals: [] },
+            },
+          },
+        },
+      },
+    },
+    {
+      id: "controlled-color-separation",
+      server: "aftereffects",
+      operation: "applyEffect",
+      precondition: '${params.strength} != "Natural HDR"',
+      args: {
+        targetId:
+          "${steps.prepare-source-for-technical-grade.result.structuredContent.layerId}",
+        effect: "Vibrance",
+        settings: {
+          Vibrance: {
+            $select: "${params.strength}",
+            cases: {
+              "Natural HDR": 0,
+              "Vivid HDR": 18,
+              "Impact HDR": 32,
+            },
+          },
+          Saturation: {
+            $select: "${params.strength}",
+            cases: {
+              "Natural HDR": 0,
+              "Vivid HDR": 3,
+              "Impact HDR": 6,
+            },
+          },
+        },
+        atTimeSeconds: 0,
+        durationSeconds:
+          "${steps.inspect-source-metadata.result.structuredContent.durationSeconds}",
+      },
+      verify: {
+        type: "object",
+        required: ["structuredContent"],
+        properties: {
+          structuredContent: {
+            type: "object",
+            required: ["appliedParameterCount", "refusedParameters"],
+            properties: {
+              appliedParameterCount: { type: "number", equals: 2 },
               refusedParameters: { type: "array", equals: [] },
             },
           },

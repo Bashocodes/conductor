@@ -165,6 +165,29 @@ export function interpolateValue(
   }
 
   if (value !== null && typeof value === "object") {
+    if ("$select" in value) {
+      const selector = interpolateValue(value.$select, context, options);
+      const cases = value.cases;
+      if (
+        typeof selector !== "string" ||
+        cases === null ||
+        typeof cases !== "object" ||
+        Array.isArray(cases)
+      ) {
+        throw new ConductorEngineError(
+          "INTERPOLATION_FAILED",
+          "A $select expression requires a string selector and an object of cases",
+        );
+      }
+      if (!(selector in cases)) {
+        throw new ConductorEngineError(
+          "INTERPOLATION_FAILED",
+          `Selection '${selector}' has no matching case`,
+        );
+      }
+      return interpolateValue(cases[selector] as JsonValue, context, options);
+    }
+
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [
         key,

@@ -147,11 +147,11 @@ const executionCases: ExecutionCase[] = [
     ],
   },
   {
-    name: "hdr-safe-grade hlg",
+    name: "hdr-safe-grade natural",
     recipe: hdrSafeGradeRecipe,
     params: {
       clip: "/media/source.mov",
-      target: "hlg",
+      strength: "Natural HDR",
       outputPath: "/renders/hlg-master.mp4",
     },
     expectedTools: [
@@ -159,6 +159,44 @@ const executionCases: ExecutionCase[] = [
       "fake_project_info",
       "fake_create_comp",
       "fake_precompose",
+      "fake_apply_effect",
+      "fake_apply_effect",
+      "fake_queue_render",
+    ],
+  },
+  {
+    name: "hdr-safe-grade vivid",
+    recipe: hdrSafeGradeRecipe,
+    params: {
+      clip: "/media/source.mov",
+      strength: "Vivid HDR",
+      outputPath: "/renders/hlg-vivid.mp4",
+    },
+    expectedTools: [
+      "fake_project_info",
+      "fake_project_info",
+      "fake_create_comp",
+      "fake_precompose",
+      "fake_apply_effect",
+      "fake_apply_effect",
+      "fake_apply_effect",
+      "fake_queue_render",
+    ],
+  },
+  {
+    name: "hdr-safe-grade impact",
+    recipe: hdrSafeGradeRecipe,
+    params: {
+      clip: "/media/source.mov",
+      strength: "Impact HDR",
+      outputPath: "/renders/hlg-impact.mp4",
+    },
+    expectedTools: [
+      "fake_project_info",
+      "fake_project_info",
+      "fake_create_comp",
+      "fake_precompose",
+      "fake_apply_effect",
       "fake_apply_effect",
       "fake_apply_effect",
       "fake_queue_render",
@@ -220,6 +258,63 @@ describe("reference recipe execution", () => {
       }
     });
   }
+
+  it("resolves all HDR strengths to their bounded After Effects controls", async () => {
+    const expected = {
+      "hdr-safe-grade natural": {
+        exposure: 0,
+        gamma: 1,
+        inputBlack: 0,
+        clipWhite: 1,
+        vibrance: undefined,
+      },
+      "hdr-safe-grade vivid": {
+        exposure: 0.12,
+        gamma: 0.97,
+        inputBlack: 0.003,
+        clipWhite: 2,
+        vibrance: { Vibrance: 18, Saturation: 3 },
+      },
+      "hdr-safe-grade impact": {
+        exposure: 0.3,
+        gamma: 0.9,
+        inputBlack: 0.008,
+        clipWhite: 2,
+        vibrance: { Vibrance: 32, Saturation: 6 },
+      },
+    } as const;
+
+    for (const [name, controls] of Object.entries(expected)) {
+      const testCase = executionCases.find((candidate) => candidate.name === name);
+      if (testCase === undefined) throw new Error(`Missing case ${name}`);
+      const { provider } = await runReferenceRecipe(testCase);
+      const effectCalls = provider.connection.calls.filter(
+        (call) => call.tool === "fake_apply_effect",
+      );
+      const exposure = effectCalls.find(
+        (call) => call.args.effect === "Exposure",
+      );
+      const levels = effectCalls.find((call) => call.args.effect === "Levels");
+      const vibrance = effectCalls.find(
+        (call) => call.args.effect === "Vibrance",
+      );
+
+      expect(exposure?.args.settings).toMatchObject({
+        Exposure: controls.exposure,
+        Offset: 0,
+        "Gamma Correction": controls.gamma,
+      });
+      expect(levels?.args.settings).toMatchObject({
+        "Input Black": controls.inputBlack,
+        "Clip To Output White": controls.clipWhite,
+      });
+      if (controls.vibrance === undefined) {
+        expect(vibrance).toBeUndefined();
+      } else {
+        expect(vibrance?.args.settings).toMatchObject(controls.vibrance);
+      }
+    }
+  });
 
   it("records the built-in HDR validation handoff in the journal", async () => {
     const testCase = executionCases.find(

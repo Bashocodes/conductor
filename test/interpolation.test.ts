@@ -26,6 +26,44 @@ const context: ResolutionContext = {
 };
 
 describe("interpolation", () => {
+  it("selects preset values from an enum parameter", () => {
+    expect(
+      interpolateArgs(
+        {
+          Exposure: {
+            $select: "${params.strength}",
+            cases: {
+              "Natural HDR": 0,
+              "Vivid HDR": 0.1,
+              "Impact HDR": 0.22,
+            },
+          },
+        },
+        {
+          params: { strength: "Impact HDR" },
+          steps: {},
+        },
+      ),
+    ).toEqual({ Exposure: 0.22 });
+  });
+
+  it("fails clearly when a preset has no matching case", () => {
+    expect(() =>
+      interpolateArgs(
+        {
+          value: {
+            $select: "${params.strength}",
+            cases: { "Natural HDR": 0 },
+          },
+        },
+        {
+          params: { strength: "Unknown HDR" },
+          steps: {},
+        },
+      ),
+    ).toThrow("Selection 'Unknown HDR' has no matching case");
+  });
+
   it("preserves the type of exact references and resolves nested outputs", () => {
     expect(
       interpolateArgs(

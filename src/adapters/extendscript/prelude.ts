@@ -312,6 +312,7 @@ var CD_EFFECT_ALIASES = {
   "Fill": "ADBE Fill",
   "Ramp": "ADBE Ramp",
   "Hue/Saturation": "ADBE HUE SATURATION",
+  "Vibrance": "ADBE Vibrance",
   "Radial Light Burst": "CC Light Burst 2.5",
   "Directional Luma Matte": "ADBE Linear Wipe",
   "Linear Wipe": "ADBE Linear Wipe",

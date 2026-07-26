@@ -158,11 +158,21 @@ describe("conductor ui server", () => {
     const body = (await (await fetch(`${url}api/recipes`, {
       headers: { "x-conductor-token": await tokenFor(url) },
     })).json()) as {
-      recipes: Array<{ id: string; params: Record<string, { path?: string }> }>;
+      recipes: Array<{
+        id: string;
+        params: Record<
+          string,
+          { path?: string; default?: unknown; values?: unknown[] }
+        >;
+      }>;
     };
     const grade = body.recipes.find((recipe) => recipe.id === "hdr-safe-grade");
     expect(grade?.params.clip?.path).toBe("open-file");
     expect(grade?.params.outputPath?.path).toBe("save-file");
+    expect(grade?.params.strength).toMatchObject({
+      default: "Natural HDR",
+      values: ["Natural HDR", "Vivid HDR", "Impact HDR"],
+    });
     const transition = body.recipes.find((recipe) => recipe.id === "motivated-transition");
     expect(transition?.params.clipA?.path).toBe("open-file");
     expect(transition?.params.clipB?.path).toBe("open-file");

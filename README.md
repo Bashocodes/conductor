@@ -149,10 +149,13 @@ queue-verified-transition-render     queueRender    /renders/transition.mov
 
 ### `hdr-safe-grade`
 
-Applies a conservative technical HLG normalization chain: source inspection,
-an explicitly verified 32-bit HLG working space, neutral exposure and levels,
-a required 10-bit ProRes HLG intermediate, and a validated HEVC Main 10
-BT.2020/HLG delivery. It intentionally adds no creative look.
+Applies the established technical HLG chain at one of three strengths.
+`Natural HDR` is preselected and preserves the current approved look;
+`Vivid HDR` adds a controlled lift and richer color; `Impact HDR` is the
+noticeable “wow, this is HDR” option while retaining over-range highlights.
+Every choice uses an explicitly verified 32-bit HLG working space, a required
+10-bit ProRes HLG intermediate, and a validated HEVC Main 10 BT.2020/HLG
+delivery.
 
 ```text
 inspect-source-metadata              projectInfo
@@ -161,9 +164,9 @@ build-source-matched-composition     createComp
 prepare-source-for-technical-grade   precompose
 bounded-exposure-normalization       applyEffect
 broadcast-safe-levels-clamp          applyEffect
-configure-10bit-hlg-output           projectInfo
+controlled-color-separation          applyEffect    Vivid/Impact only
 queue-verified-10bit-hlg-render      queueRender    /renders/hlg.mov
-                                      handoff: validate with reel-hdr
+                                      handoff: encode and validate HEVC HLG
 ```
 
 See [`docs/RECIPES.md`](docs/RECIPES.md) for the complete plans and recipe
