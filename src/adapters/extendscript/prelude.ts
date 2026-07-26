@@ -79,22 +79,70 @@ var CD_AXIS = {
   anchorPointY: ["ADBE Anchor Point", 1]
 };
 
-function cdProperty(layer, name) {
+/**
+ * Effect parameter names a recipe is likely to use, mapped to what After
+ * Effects actually calls them. Confirmed against a live host.
+ */
+var CD_PARAM_ALIASES = {
+  progress: "Transition Completion",
+  completion: "Transition Completion",
+  angle: "Wipe Angle",
+  blurLength: "Blur Length",
+  amount: "Intensity"
+};
+
+function cdSameName(a, b) {
+  return String(a).toLowerCase() === String(b).toLowerCase();
+}
+
+/**
+ * Finds a parameter inside one effect, tolerating case and the alias table.
+ * After Effects labels parameters for humans ("Transition Completion"), while
+ * recipes name intents ("progress").
+ */
+function cdEffectParam(fx, name) {
+  var wanted = CD_PARAM_ALIASES[name] ? CD_PARAM_ALIASES[name] : name;
+  for (var j = 1; j <= fx.numProperties; j++) {
+    if (cdSameName(fx.property(j).name, wanted)) { return fx.property(j); }
+  }
+  return null;
+}
+
+/**
+ * @param scopeEffect optional effect name; when a target was addressed as
+ *        "layerId:Effect Name", only that effect's parameters are searched, so
+ *        two effects exposing an "Intensity" cannot be confused.
+ */
+function cdProperty(layer, name, scopeEffect) {
   var transform = layer.property("ADBE Transform Group");
   if (CD_TRANSFORM[name]) { return transform.property(CD_TRANSFORM[name]); }
   if (CD_AXIS[name]) { return transform.property(CD_AXIS[name][0]); }
   if (name === "tracking") { return cdTracking(layer); }
+
   var effects = layer.property("ADBE Effect Parade");
+  var available = [];
   if (effects) {
     for (var i = 1; i <= effects.numProperties; i++) {
       var fx = effects.property(i);
-      for (var j = 1; j <= fx.numProperties; j++) {
-        if (fx.property(j).name === name) { return fx.property(j); }
-      }
-      if (fx.name === name) { return fx; }
+      if (scopeEffect && !cdSameName(fx.name, scopeEffect)) { continue; }
+      var found = cdEffectParam(fx, name);
+      if (found !== null) { return found; }
+      for (var j = 1; j <= fx.numProperties; j++) { available.push(fx.name + "." + fx.property(j).name); }
+      if (cdSameName(fx.name, name)) { return fx; }
     }
   }
-  throw new Error("Unknown property '" + name + "' on layer " + layer.name);
+  throw new Error(
+    "Unknown property '" + name + "' on layer " + layer.name +
+    (available.length > 0 ? ". Available: " + available.join(", ") : "")
+  );
+}
+
+/** Splits a target addressed as "layerId" or "layerId:Effect Name". */
+function cdSplitTarget(targetId) {
+  var text = String(targetId);
+  var colon = text.indexOf(":");
+  if (colon < 0) { return { id: text, effect: null }; }
+  return { id: text.substring(0, colon), effect: text.substring(colon + 1) };
 }
 
 /**
@@ -170,7 +218,7 @@ function cdEaseKeysAtTimes(prop, times, inInfluence, outInfluence) {
  * them together on one time grid with one easing is what keeps a move reading
  * as a single gesture rather than several coincidental ones.
  */
-function cdApplyTrack(layer, name, times, values, inInfluence, outInfluence) {
+function cdApplyTrack(layer, name, times, values, inInfluence, outInfluence, scopeEffect) {
   var applied = [];
   var i;
   var compound = (values.length > 0 && values[0] !== null &&
@@ -191,19 +239,118 @@ function cdApplyTrack(layer, name, times, values, inInfluence, outInfluence) {
         if (values[i][sub] !== undefined) { subTimes.push(times[i]); subValues.push(values[i][sub]); }
       }
       if (subTimes.length > 0) {
-        applied = applied.concat(cdApplyTrack(layer, sub, subTimes, subValues, inInfluence, outInfluence));
+        applied = applied.concat(cdApplyTrack(layer, sub, subTimes, subValues, inInfluence, outInfluence, scopeEffect));
       }
     }
     return applied;
   }
 
-  var prop = cdProperty(layer, name);
+  var prop = cdProperty(layer, name, scopeEffect);
   for (i = 0; i < times.length; i++) {
     cdSetValueAtTime(layer, name, prop, times[i], values[i]);
   }
   var eased = cdEaseKeysAtTimes(prop, times, inInfluence, outInfluence);
   applied.push({ property: name, keyCount: prop.numKeys, easedKeys: eased });
   return applied;
+}
+
+/**
+ * Imports a media file and places it on a composition.
+ *
+ * Reuses footage already in the project rather than importing the same file
+ * twice, which would leave a recipe's second run with a project full of
+ * duplicates.
+ */
+function cdImportFootage(path) {
+  var file = new File(path);
+  if (!file.exists) { throw new Error("Media file not found: " + path); }
+
+  var p = app.project;
+  for (var i = 1; i <= p.numItems; i++) {
+    var item = p.item(i);
+    if (item instanceof FootageItem && item.mainSource && item.mainSource.file &&
+        item.mainSource.file.fsName === file.fsName) {
+      return item;
+    }
+  }
+  return p.importFile(new ImportOptions(file));
+}
+
+function cdImportFootageLayer(comp, path, startTimeSeconds) {
+  var footage = cdImportFootage(path);
+  var layer = comp.layers.add(footage);
+  layer.startTime = startTimeSeconds;
+  layer.motionBlur = true;
+  return layer;
+}
+
+/**
+ * Descriptive effect names mapped to After Effects match names.
+ *
+ * Recipes describe an intent ("Directional Blur"); After Effects addresses
+ * effects by locale-stable match names that rarely resemble the label shown in
+ * the UI — Directional Blur is "ADBE Motion Blur", Levels is
+ * "ADBE Easy Levels2". Every entry below was confirmed to load on a live
+ * After Effects 26.3 rather than taken from documentation.
+ *
+ * A match name passed straight through still works, so a recipe can address
+ * any effect this map has not learned yet.
+ */
+var CD_EFFECT_ALIASES = {
+  "Directional Blur": "ADBE Motion Blur",
+  "Gaussian Blur": "ADBE Gaussian Blur 2",
+  "Radial Blur": "ADBE Radial Blur",
+  "Levels": "ADBE Easy Levels2",
+  "Levels (Individual Controls)": "ADBE Pro Levels2",
+  "Exposure": "ADBE Exposure2",
+  "Curves": "ADBE CurvesCustom",
+  "Glow": "ADBE Glo2",
+  "Tint": "ADBE Tint",
+  "Fill": "ADBE Fill",
+  "Ramp": "ADBE Ramp",
+  "Hue/Saturation": "ADBE HUE SATURATION",
+  "Radial Light Burst": "CC Light Burst 2.5",
+  "Directional Luma Matte": "ADBE Linear Wipe",
+  "Linear Wipe": "ADBE Linear Wipe",
+  "Set Matte": "ADBE Set Matte3"
+};
+
+function cdAddEffect(layer, name) {
+  var effects = layer.property("ADBE Effect Parade");
+  var matchName = CD_EFFECT_ALIASES[name] ? CD_EFFECT_ALIASES[name] : name;
+  try {
+    return effects.addProperty(matchName);
+  } catch (e) {
+    throw new Error(
+      "After Effects has no effect '" + name + "'" +
+      (matchName === name ? "" : " (tried match name '" + matchName + "')") +
+      ". Pass an After Effects match name, or add an alias."
+    );
+  }
+}
+
+/**
+ * Resolves an effect target that may be either a layer or a whole composition.
+ *
+ * An effect cannot be attached to a composition, so when a recipe asks to treat
+ * one as a unit — a light burst that washes the whole transition — the correct
+ * After Effects idiom is an adjustment layer spanning the composition. Reuses
+ * the one Conductor made earlier instead of stacking a new one per effect.
+ */
+function cdEffectTarget(targetId) {
+  var numeric = parseInt(targetId, 10);
+  var item = app.project.itemByID(numeric);
+  if (item && item instanceof CompItem) {
+    for (var i = 1; i <= item.numLayers; i++) {
+      if (item.layer(i).name === "Conductor Adjustments") { return item.layer(i); }
+    }
+    var adjustment = item.layers.addSolid([1, 1, 1], "Conductor Adjustments", item.width, item.height, 1);
+    adjustment.adjustmentLayer = true;
+    adjustment.moveToBeginning();
+    adjustment.motionBlur = true;
+    return adjustment;
+  }
+  return cdFindLayer(targetId);
 }
 
 function cdParseColor(hex) {

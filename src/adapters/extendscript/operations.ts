@@ -131,7 +131,11 @@ function renderSetKeyframes(args: ToolArgs<"setKeyframes">): string {
   const values = args.keyframes.map((keyframe) => keyframe.value);
   return wrap(
     "set keyframes",
-    `  var layer = cdFindLayer(${es3Literal(args.layerId)});
+    `  // A target may name an effect too ("layerId:Effect Name"), which is what
+  // applyEffect hands back, so a following step can animate that effect's
+  // parameters without ambiguity.
+  var target = cdSplitTarget(${es3Literal(args.layerId)});
+  var layer = cdFindLayer(target.id);
   var comp = layer.containingComp;
   comp.motionBlur = true;
   layer.motionBlur = ${args.motionBlur ? "true" : "false"};
@@ -149,7 +153,7 @@ function renderSetKeyframes(args: ToolArgs<"setKeyframes">): string {
 
   // cdApplyTrack writes the keys and eases every one of them. Linear keyframes
   // are the loudest amateur tell, so easing is not optional and has no opt-out.
-  var applied = cdApplyTrack(layer, ${es3Literal(args.property)}, times, values, ${inInfluence}, ${outInfluence});
+  var applied = cdApplyTrack(layer, ${es3Literal(args.property)}, times, values, ${inInfluence}, ${outInfluence}, target.effect);
 
   var total = 0;
   for (var k = 0; k < applied.length; k++) { total += applied[k].keyCount; }
@@ -160,9 +164,10 @@ function renderSetKeyframes(args: ToolArgs<"setKeyframes">): string {
 function renderApplyEffect(args: ToolArgs<"applyEffect">): string {
   return wrap(
     "apply effect",
-    `  var layer = cdFindLayer(${es3Literal(args.targetId)});
-  var effects = layer.property("ADBE Effect Parade");
-  var fx = effects.addProperty(${es3Literal(args.effect)});
+    `  // The target may be a layer or a whole composition; a composition resolves to
+  // a shared adjustment layer, which is how After Effects treats a comp as one.
+  var layer = cdEffectTarget(${es3Literal(args.targetId)});
+  var fx = cdAddEffect(layer, ${es3Literal(args.effect)});
   var settings = ${es3Literal(args.settings as unknown as JsonValue)};
   var applied = [];
   for (var key in settings) {
@@ -182,14 +187,27 @@ function renderPrecompose(args: ToolArgs<"precompose">): string {
     "precompose",
     `  var comp = cdComp(${es3Literal(args.compId)});
   var wanted = ${es3Literal(args.layerIds)};
+  var sources = ${es3Literal(args.sources as unknown as JsonValue)};
   var indices = [];
+  var imported = [];
+
+  // Sources name files that are not in the project yet. Import each one, place
+  // it on the composition at its start time, and precompose it along with any
+  // layers addressed by id. A transition recipe describes the clips it needs
+  // this way, so precompose without import would leave it nothing to work on.
+  for (var s = 0; s < sources.length; s++) {
+    var layer = cdImportFootageLayer(comp, sources[s].path, sources[s].startTimeSeconds);
+    indices.push(layer.index);
+    imported.push({ path: sources[s].path, role: sources[s].role, layerId: String(layer.id) });
+  }
+
   for (var i = 0; i < wanted.length; i++) {
     var id = parseInt(wanted[i], 10);
     for (var j = 1; j <= comp.numLayers; j++) {
       if (comp.layer(j).id === id) { indices.push(j); break; }
     }
   }
-  if (indices.length === 0) { throw new Error("No matching layers to precompose"); }
+  if (indices.length === 0) { throw new Error("No layers or sources to precompose"); }
   var pre = comp.layers.precompose(indices, ${es3Literal(args.name)}, true);
   var host = null;
   for (var k = 1; k <= comp.numLayers; k++) {
@@ -199,7 +217,7 @@ function renderPrecompose(args: ToolArgs<"precompose">): string {
     host.motionBlur = ${args.motionBlur ? "true" : "false"};
     host.collapseTransformation = ${args.collapseTransformations ? "true" : "false"};
   }
-  return { precompId: String(pre.id), layerId: host === null ? "" : String(host.id), name: pre.name };`,
+  return { precompId: String(pre.id), layerId: host === null ? "" : String(host.id), name: pre.name, imported: imported };`,
   );
 }
 
@@ -252,11 +270,74 @@ function renderProjectInfo(args: ToolArgs<"projectInfo">): string {
     return wrap(
       "configure project",
       `  var settings = ${es3Literal(args.settings as unknown as JsonValue)};
+  var p = app.project;
+  var before = { workingSpace: p.workingSpace, bitsPerChannel: p.bitsPerChannel };
   var changed = [];
-  if (settings.workingSpace !== undefined) { app.project.workingSpace = settings.workingSpace; changed.push("workingSpace"); }
-  if (settings.bitsPerChannel !== undefined) { app.project.bitsPerChannel = settings.bitsPerChannel; changed.push("bitsPerChannel"); }
-  if (settings.expressionEngine !== undefined) { app.project.expressionEngine = settings.expressionEngine; changed.push("expressionEngine"); }
-  return { configured: changed, workingSpace: app.project.workingSpace, bitsPerChannel: app.project.bitsPerChannel };`,
+  var refused = [];
+
+  // Bit depth is safe: it is a small enumeration and an invalid value throws
+  // rather than prompting. Recipes may call it bitDepth.
+  var depth = (settings.bitsPerChannel !== undefined) ? settings.bitsPerChannel : settings.bitDepth;
+  if (depth !== undefined && depth !== p.bitsPerChannel) {
+    try { p.bitsPerChannel = depth; changed.push("bitsPerChannel"); }
+    catch (e) { refused.push({ setting: "bitsPerChannel", reason: String(e) }); }
+  }
+
+  /*
+   * Working space is deliberately NOT changed to an arbitrary requested value.
+   * It is a project-wide colour-management setting that silently alters how
+   * every existing composition in someone's open project is interpreted, and
+   * After Effects answers an unrecognised name with a modal dialog, which
+   * stalls the MCP connection until a human dismisses it. So: apply it only
+   * when it already matches, and otherwise report the mismatch and let a
+   * person decide.
+   */
+  if (settings.workingSpace !== undefined && settings.workingSpace !== p.workingSpace) {
+    refused.push({
+      setting: "workingSpace",
+      requested: settings.workingSpace,
+      current: p.workingSpace,
+      reason: "Changing the project working space affects every existing composition; set it in After Effects, or pass allowWorkingSpaceChange."
+    });
+    if (settings.allowWorkingSpaceChange === true) {
+      try { p.workingSpace = settings.workingSpace; changed.push("workingSpace"); refused.pop(); }
+      catch (e2) { refused[refused.length - 1].reason = String(e2); }
+    }
+  }
+
+  return {
+    configured: changed,
+    refused: refused,
+    before: before,
+    workingSpace: p.workingSpace,
+    bitsPerChannel: p.bitsPerChannel
+  };`,
+    );
+  }
+
+  if (args.mediaPath !== undefined) {
+    // Inspecting a file, not the project: a grade recipe needs the source's
+    // real dimensions and rate before it can build a matching composition.
+    return wrap(
+      "inspect media",
+      `  var footage = cdImportFootage(${es3Literal(args.mediaPath)});
+  var source = footage.mainSource;
+  return {
+    path: source.file ? source.file.fsName : ${es3Literal(args.mediaPath)},
+    name: footage.name,
+    footageId: String(footage.id),
+    width: footage.width,
+    height: footage.height,
+    pixelAspect: footage.pixelAspect,
+    frameRate: footage.frameRate,
+    durationSeconds: footage.duration,
+    hasVideo: footage.hasVideo,
+    hasAudio: footage.hasAudio,
+    // Colour management state matters for an HDR grade, so report the project
+    // working space alongside the clip rather than assuming one.
+    projectWorkingSpace: app.project.workingSpace,
+    projectBitsPerChannel: app.project.bitsPerChannel
+  };`,
     );
   }
 
