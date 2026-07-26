@@ -33,7 +33,10 @@ function cdEase(prop, speed, influence) {
 }
 
 function cdComp(compId) {
-  var item = app.project.itemByID(parseInt(compId, 10));
+  // itemByID throws rather than returning null for an unknown id, so the
+  // failure has to be caught and reported in terms the caller can act on.
+  var item = null;
+  try { item = app.project.itemByID(parseInt(compId, 10)); } catch (e) { item = null; }
   if (!item) { throw new Error("No item with id " + compId); }
   if (!(item instanceof CompItem)) { throw new Error("Item " + compId + " is not a composition"); }
   return item;
@@ -339,7 +342,12 @@ function cdAddEffect(layer, name) {
  */
 function cdEffectTarget(targetId) {
   var numeric = parseInt(targetId, 10);
-  var item = app.project.itemByID(numeric);
+  // itemByID THROWS for an id that is not an item — it does not return null —
+  // and a layer id is not an item id, so this must be guarded rather than
+  // tested for falsiness. The thrown message is an unhelpful
+  // "internal verification failure, sorry! {Item Not Found}".
+  var item = null;
+  try { item = app.project.itemByID(numeric); } catch (e) { item = null; }
   if (item && item instanceof CompItem) {
     for (var i = 1; i <= item.numLayers; i++) {
       if (item.layer(i).name === "Conductor Adjustments") { return item.layer(i); }

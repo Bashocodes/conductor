@@ -197,6 +197,42 @@ describe("craft rules are not optional", () => {
   it("creates compositions with motion blur already enabled", () => {
     expect(script("createComp", CREATE_COMP)).toContain("comp.motionBlur = true;");
   });
+
+  it("guards every itemByID lookup", () => {
+    /*
+     * app.project.itemByID THROWS for an id that is not an item rather than
+     * returning null, and a layer id is not an item id. Testing it for
+     * falsiness produced After Effects' unhelpful
+     * "internal verification failure, sorry! {Item Not Found}" mid-recipe.
+     */
+    const source = script("applyEffect", {
+      targetId: "39",
+      effect: "ADBE Gaussian Blur 2",
+      settings: {},
+      atTimeSeconds: 0,
+      durationSeconds: 1,
+    });
+    const lookups = source.match(/app\.project\.itemByID/g) ?? [];
+    expect(lookups.length).toBeGreaterThan(0);
+    for (const line of source.split("\n")) {
+      if (line.includes("app.project.itemByID")) {
+        expect(line).toContain("try {");
+      }
+    }
+  });
+
+  it("never changes the project working space without an explicit opt-in", () => {
+    /*
+     * The working space reinterprets every composition already in an open
+     * project. A recipe asking for one must not silently rewrite it.
+     */
+    const source = script("projectInfo", {
+      action: "configure",
+      settings: { workingSpace: "Rec.2100 HLG", bitDepth: 32 },
+    });
+    expect(source).toContain("allowWorkingSpaceChange");
+    expect(source).toContain("refused.push");
+  });
 });
 
 describe("easingToKeyframeEase", () => {
