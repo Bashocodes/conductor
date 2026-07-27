@@ -17,7 +17,7 @@ import {
 } from "../src/beat/verify.js";
 
 describe("post-render Beat Sync verification", () => {
-  it("labels frame placement as timeline evidence, not musical proof", () => {
+  it("measures authored frame placement as timeline evidence, not musical proof", () => {
     const report = measureBeatSyncFramePlacement(
       [
         { cutFrame: 15, actualFrame: 15, intendedOnsetSeconds: 0.498 },
@@ -47,7 +47,7 @@ describe("post-render Beat Sync verification", () => {
     expect(detection.cuts.map((cut) => cut.frame)).toEqual([4, 7]);
   });
 
-  it("compares independently detected video cuts with rendered-audio onsets", () => {
+  it("checks rendered visual cuts against rendered-audio onsets", () => {
     const report = measureBeatSyncEndToEndAlignment(
       {
         frameCount: 60,
@@ -99,11 +99,11 @@ describe("post-render Beat Sync verification", () => {
     expect(framePlacement.status).toBe("verified");
     expect(endToEndAlignment.status).toBe("failed");
     expect(() => assertBeatSyncVerification(report)).toThrow(
-      "end-to-end alignment failed",
+      "rendered A/V conformance failed",
     );
   });
 
-  it("writes the two reports separately and marks independent failure", async () => {
+  it("writes the two reports separately and marks rendered A/V failure", async () => {
     const directory = await mkdtemp(join(tmpdir(), "beat-journal-"));
     const path = join(directory, "run.json");
     await writeFile(

@@ -48,6 +48,7 @@ const publicParams = {
   transitions: true,
   light: true,
   camera: true,
+  pixelSort: true,
   brandPulse: false,
   frameRate: 30,
   outputPath: "/renders/beat-sync.mp4",
@@ -66,10 +67,53 @@ describe("Beat Sync Studio recipe", () => {
     ]);
     expect(plan.cameraKeyframes.length).toBeGreaterThanOrEqual(2);
     expect(plan.lightKeyframes.length).toBeGreaterThan(2);
+    expect(plan.pixelSortKeyframes).toContainEqual({ time: 0.5, value: 100 });
+    expect(plan.pixelSortKeyframes).toContainEqual({ time: 1, value: 30 });
+    expect(plan.pixelSortKeyframes).toContainEqual({ time: 1.5, value: 60 });
     expect(plan.brandKeyframes).toEqual([
       { time: 0, value: 10 },
       { time: 4.5, value: 10 },
     ]);
+  });
+
+  it("retains sub-hop onset time for the continuous Beat Amount curve", () => {
+    const sampleTime = 0.503;
+    const subHopAnalysis: BeatAnalysis = {
+      ...analysis,
+      onsets: analysis.onsets.map((onset, index) =>
+        index === 0 ? { ...onset, timeSeconds: sampleTime } : onset
+      ),
+      beatTimesSeconds: [sampleTime, ...analysis.beatTimesSeconds.slice(1)],
+      downbeatTimesSeconds: [
+        sampleTime,
+        ...analysis.downbeatTimesSeconds.slice(1),
+      ],
+    };
+
+    const plan = buildBeatSyncStudioPlan(publicParams, subHopAnalysis);
+
+    expect(plan.pixelSortKeyframes).toContainEqual({
+      time: sampleTime,
+      value: 100,
+    });
+    expect(plan.mediaSegments[1]?.cutFrame).toBe(15);
+    expect(plan.mediaSegments[1]?.timelineInSeconds).toBe(0.5);
+  });
+
+  it("uses the quantized plan hierarchy for Pixel Sort burst size", () => {
+    const unclassifiedOnsets: BeatAnalysis = {
+      ...analysis,
+      onsets: analysis.onsets.map((onset) => ({
+        ...onset,
+        importance: "beat",
+      })),
+    };
+
+    const plan = buildBeatSyncStudioPlan(publicParams, unclassifiedOnsets);
+
+    expect(plan.pixelSortKeyframes).toContainEqual({ time: 0.5, value: 100 });
+    expect(plan.pixelSortKeyframes).toContainEqual({ time: 1, value: 30 });
+    expect(plan.pixelSortKeyframes).toContainEqual({ time: 1.5, value: 60 });
   });
 
   it("does not call an invisible boundary in one continuous video a cut", () => {
@@ -107,9 +151,30 @@ describe("Beat Sync Studio recipe", () => {
       "fake_set_keyframes",
       "fake_apply_effect",
       "fake_set_keyframes",
+      "fake_apply_effect",
+      "fake_set_keyframes",
       "fake_set_keyframes",
       "fake_queue_render",
     ]);
+    expect(
+      calls.find(
+        (call) =>
+          call.tool === "fake_apply_effect"
+          && call.args.effect === "director-pixel-sort",
+      )?.args.settings,
+    ).toEqual({
+      Intensity: 0,
+      Phase: 100,
+      "Beat Amount": 0,
+      Seed: 108,
+    });
+    expect(
+      calls.find(
+        (call) =>
+          call.tool === "fake_set_keyframes"
+          && call.args.property === "Beat Amount",
+      )?.args.keyframes,
+    ).toEqual(plan.pixelSortKeyframes);
     expect(calls.find((call) => call.tool === "fake_add_markers")?.args.markers)
       .toHaveLength(8);
     expect(calls.at(-1)?.args).toMatchObject({

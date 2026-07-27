@@ -816,6 +816,7 @@ function beatSyncFingerprint(params) {
     transitions: params.transitions,
     light: params.light,
     camera: params.camera,
+    pixelSort: params.pixelSort,
     brandPulse: params.brandPulse,
     frameRate: params.frameRate,
   });
@@ -987,7 +988,7 @@ function renderBeatSyncParams() {
     onChange: resetBeatAnalysis,
   });
   const families = el("div", "beat-family-grid");
-  for (const name of ["cuts", "transitions", "light", "camera", "brandPulse"]) {
+  for (const name of ["cuts", "transitions", "light", "camera", "pixelSort", "brandPulse"]) {
     appendBeatEventToggle(families, name, defs[name]);
   }
   edit.body.appendChild(families);
@@ -1004,7 +1005,7 @@ function renderBeatSyncParams() {
   const analysis = appendSection(
     host,
     "Measured map",
-    "This is a pre-render measurement, not a beat-sync claim. The delivered cut deltas are verified after render.",
+    "This is a pre-render measurement, not a beat-sync claim. Fine onset timing drives parameter curves; cuts still quantize to frames (up to 16.67 ms nearest-frame error at 30 fps).",
   );
   const analyze = el("button", "act small", "Analyze track");
   analyze.type = "button";
@@ -1019,7 +1020,7 @@ function renderBeatSyncParams() {
   const delivery = appendSection(
     host,
     "Verified delivery",
-    "The existing 32-bpc Rec.2100 HLG → HEVC Main 10 path runs first; then every delivered cut is measured against its intended onset.",
+    "The existing 32-bpc Rec.2100 HLG → HEVC Main 10 path runs first. Authored frame placement and rendered A/V conformance are reported separately; they agree by construction when healthy and diverge on pipeline failure.",
   );
   appendParamField(delivery.body, "outputPath", defs.outputPath);
 
@@ -1704,14 +1705,14 @@ function appendFramePlacementEvidence(parent, report) {
     "alignment-evidence " + (report.status === "verified" ? "verified" : "failed"),
   );
   if (report.status === "not-applicable") {
-    evidence.appendChild(el("b", null, "Frame placement · not applicable."));
+    evidence.appendChild(el("b", null, "Authored frame placement · not applicable."));
     evidence.appendChild(document.createTextNode(
       " No cut events were enabled."));
   } else {
     evidence.appendChild(el(
       "b",
       null,
-      "Frame placement · " + String(report.cutsWithinHalfFrame)
+      "Authored frame placement · " + String(report.cutsWithinHalfFrame)
         + " of " + String(report.cutCount)
         + " cuts within " + (Number(report.frameDurationSeconds) * 500).toFixed(2)
         + " ms.",
@@ -1730,16 +1731,16 @@ function appendEndToEndAlignmentEvidence(parent, report) {
     "alignment-evidence " + (report.status === "verified" ? "verified" : "failed"),
   );
   if (report.status === "not-applicable") {
-    evidence.appendChild(el("b", null, "End-to-end alignment · not applicable."));
+    evidence.appendChild(el("b", null, "Rendered A/V conformance · not applicable."));
     evidence.appendChild(document.createTextNode(
       " No authored visual cuts were enabled."));
   } else {
     evidence.appendChild(el(
       "b",
       null,
-      "End-to-end alignment · " + String(report.cutsWithinHalfFrame)
+      "Rendered A/V conformance · " + String(report.cutsWithinHalfFrame)
         + " of " + String(report.detectedVisualCutCount)
-        + " independently detected cuts within "
+        + " detected cuts within "
         + (Number(report.frameDurationSeconds) * 500).toFixed(2) + " ms.",
     ));
     evidence.appendChild(document.createTextNode(
@@ -1830,7 +1831,7 @@ function startRender(queued) {
         ? "Render complete; Beat Sync verification failed."
         : endToEnd.status === "not-applicable"
           ? "Render complete; no authored visual cuts to compare."
-          : "Render complete; frame placement and end-to-end alignment verified.";
+          : "Render complete; authored placement and rendered A/V conformance verified.";
   });
   source.addEventListener("done", (event) => {
     settled = true;

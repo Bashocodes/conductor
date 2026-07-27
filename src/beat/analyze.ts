@@ -200,13 +200,44 @@ function median(values: number[]): number {
   );
 }
 
-function onsetEnvelope(
+/**
+ * Applies the detector's percussive emphasis once, before both spectral-flux
+ * analysis and sub-hop transient localization.
+ *
+ * This is not source separation. The three-tap FIR blends the broadband signal
+ * with its second difference: DC retains 0.35x gain while Nyquist approaches
+ * 2x, matching the detector's low-to-high spectral weighting without claiming
+ * to isolate drums from harmonic content.
+ */
+function percussiveWeightedSignal(
   pcm: ArrayLike<number>,
+): Float64Array {
+  const weighted = new Float64Array(pcm.length);
+  let previous = 0;
+  let previousPrevious = 0;
+  for (let sample = 0; sample < pcm.length; sample += 1) {
+    const current = Number.isFinite(pcm[sample])
+      ? (pcm[sample] as number)
+      : 0;
+    const secondDifference =
+      current - 2 * previous + previousPrevious;
+    weighted[sample] = 0.35 * current + 0.4125 * secondDifference;
+    previousPrevious = previous;
+    previous = current;
+  }
+  return weighted;
+}
+
+function onsetEnvelope(
+  percussiveSignal: ArrayLike<number>,
   windowSize: number,
   hopSize: number,
 ): Float64Array {
   const window = hannWindow(windowSize);
-  const frameCount = Math.max(1, Math.ceil(pcm.length / hopSize) + 1);
+  const frameCount = Math.max(
+    1,
+    Math.ceil(percussiveSignal.length / hopSize) + 1,
+  );
   const envelope = new Float64Array(frameCount);
   let previous: Float64Array<ArrayBufferLike> = new Float64Array(
     windowSize / 2 + 1,
@@ -219,15 +250,15 @@ function onsetEnvelope(
     for (let offset = 0; offset < windowSize; offset += 1) {
       const sourceIndex = start + offset;
       centered[offset] =
-        sourceIndex >= 0 && sourceIndex < pcm.length
-          ? (pcm[sourceIndex] as number)
+        sourceIndex >= 0 && sourceIndex < percussiveSignal.length
+          ? (percussiveSignal[sourceIndex] as number)
           : 0;
     }
     const spectrum = fftMagnitudes(centered, window);
     let flux = 0;
-    // This is not source separation. It is a percussive-weighted spectral-flux
-    // approximation: positive spectral changes are weighted toward upper bands
-    // so broadband drum transients outrank sustained low/mid-frequency tones.
+    // The input already carries a deterministic percussive emphasis. Positive
+    // spectral changes receive the matching high-band weighting again so
+    // broadband attacks outrank sustained low/mid-frequency tones.
     for (let bin = 1; bin < spectrum.length; bin += 1) {
       const current = Math.log1p(10 * (spectrum[bin] as number));
       const before = Math.log1p(10 * (previous[bin] as number));
@@ -352,41 +383,81 @@ function classifyPeaks(
   peaks: Peak[],
   hopSize: number,
   sampleRate: number,
-  pcm: ArrayLike<number>,
+  percussiveSignal: ArrayLike<number>,
 ): DetectedOnset[] {
-  return peaks.map((peak, index) => {
+  let globalPeak = 0;
+  let globalEnergy = 0;
+  for (let sample = 0; sample < percussiveSignal.length; sample += 1) {
+    const value = percussiveSignal[sample] as number;
+    globalPeak = Math.max(globalPeak, Math.abs(value));
+    globalEnergy += value * value;
+  }
+  const globalRms = percussiveSignal.length === 0
+    ? 0
+    : Math.sqrt(globalEnergy / percussiveSignal.length);
+  const amplitudeGate = Math.max(
+    1e-5,
+    globalPeak * 0.0025,
+    globalRms * 0.015,
+  );
+
+  const localized = peaks.flatMap((peak) => {
     // The parabolic envelope position gives a stable sub-hop neighbourhood.
-    // Within it, the strongest sample-to-sample change identifies the transient
-    // edge rather than the centre of the 23 ms analysis window.
+    // Within it, the strongest change in the same percussive-weighted signal
+    // identifies the transient edge. Raw broadband slope is deliberately not
+    // used: a tonal waveform peak or hiss spike is not a perceptual attack.
     const approximateSample = peak.refinedFrame * hopSize;
     const start = Math.max(1, Math.floor(approximateSample - hopSize));
-    const end = Math.min(pcm.length - 1, Math.ceil(approximateSample + hopSize));
+    const end = Math.min(
+      percussiveSignal.length - 1,
+      Math.ceil(approximateSample + hopSize),
+    );
+    let localPeak = 0;
+    let localEnergy = 0;
+    let localSampleCount = 0;
     let transientSample = approximateSample;
     let transientStrength = -Infinity;
     for (let sample = start; sample <= end; sample += 1) {
+      const value = percussiveSignal[sample] as number;
+      localPeak = Math.max(localPeak, Math.abs(value));
+      localEnergy += value * value;
+      localSampleCount += 1;
       const strength = Math.abs(
-        (pcm[sample] as number) - (pcm[sample - 1] as number),
+        value - (percussiveSignal[sample - 1] as number),
       );
       if (strength > transientStrength) {
         transientStrength = strength;
         transientSample = sample;
       }
     }
+    const localRms = localSampleCount === 0
+      ? 0
+      : Math.sqrt(localEnergy / localSampleCount);
+    if (
+      localPeak < amplitudeGate ||
+      localRms < amplitudeGate * 0.2
+    ) {
+      return [];
+    }
     return {
       timeSeconds: transientSample / sampleRate,
       envelopeFrame: peak.frame,
       strength: peak.strength,
-      // With no score or meter metadata, assigning the first accepted pulse as
-      // phase zero is an explicit structural estimate. It creates a stable
-      // four-beat edit hierarchy without pretending to infer musical semantics.
-      importance:
-        index % 4 === 0
-          ? "downbeat"
-          : index % 2 === 0
-            ? "primary"
-            : "beat",
     };
   });
+
+  return localized.map((onset, index) => ({
+    ...onset,
+    // With no score or meter metadata, assigning the first accepted pulse as
+    // phase zero is an explicit structural estimate. It creates a stable
+    // four-beat edit hierarchy without pretending to infer musical semantics.
+    importance:
+      index % 4 === 0
+        ? "downbeat"
+        : index % 2 === 0
+          ? "primary"
+          : "beat",
+  }));
 }
 
 export function analyzePcm(
@@ -410,7 +481,8 @@ export function analyzePcm(
     );
   }
 
-  const envelope = onsetEnvelope(pcm, windowSize, hopSize);
+  const percussiveSignal = percussiveWeightedSignal(pcm);
+  const envelope = onsetEnvelope(percussiveSignal, windowSize, hopSize);
   const minimumGapFrames = Math.max(
     1,
     Math.round(
@@ -422,7 +494,12 @@ export function analyzePcm(
     options.medianRadiusFrames ?? 16,
     minimumGapFrames,
   );
-  const onsets = classifyPeaks(peaks, hopSize, sampleRate, pcm);
+  const onsets = classifyPeaks(
+    peaks,
+    hopSize,
+    sampleRate,
+    percussiveSignal,
+  );
   const beatTimesSeconds = onsets.map((onset) => onset.timeSeconds);
   return {
     sampleRate,

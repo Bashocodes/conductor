@@ -402,6 +402,7 @@ describe("conductor ui server", () => {
       path: "open-file",
     });
     expect(beatSync?.params.brandPulse?.default).toBe(false);
+    expect(beatSync?.params.pixelSort?.default).toBe(false);
   });
 
   it("converts an After Effects HLG still into something a browser shows honestly", () => {

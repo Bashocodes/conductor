@@ -1589,7 +1589,7 @@ export async function startConductorServer(options: ServeOptions): Promise<{
           const ffmpeg = await findExecutable(FFMPEG_CANDIDATES);
           if (ffmpeg === undefined) {
             throw new Error(
-              "ffmpeg is required for independent beat-sync verification, but it was not found.",
+              "ffmpeg is required for rendered A/V beat-sync verification, but it was not found.",
             );
           }
           const ffprobe = await findExecutable(FFPROBE_CANDIDATES);
@@ -1615,15 +1615,15 @@ export async function startConductorServer(options: ServeOptions): Promise<{
           const endToEnd = verification.endToEndAlignment;
           process.stdout.write(
             placement.status === "not-applicable"
-              ? "Beat Sync frame placement: no cut events were enabled.\n"
-              : `Beat Sync frame placement: ${placement.cutsWithinHalfFrame} of ${placement.cutCount} cuts within half a frame; `
+              ? "Beat Sync authored frame placement: no cut events were enabled.\n"
+              : `Beat Sync authored frame placement: ${placement.cutsWithinHalfFrame} of ${placement.cutCount} cuts within half a frame; `
                 + `max ${(placement.maxDeviationSeconds * 1_000).toFixed(3)} ms, `
                 + `mean ${(placement.meanDeviationSeconds * 1_000).toFixed(3)} ms.\n`,
           );
           process.stdout.write(
             endToEnd.status === "not-applicable"
-              ? "Beat Sync end-to-end alignment: no authored visual cuts to compare.\n"
-              : `Beat Sync end-to-end alignment: independently detected ${endToEnd.detectedVisualCutCount} visual cuts and `
+              ? "Beat Sync rendered A/V conformance: no authored visual cuts to compare.\n"
+              : `Beat Sync rendered A/V conformance: detected ${endToEnd.detectedVisualCutCount} visual cuts and `
                 + `${endToEnd.detectedAudioOnsetCount} audio onsets; ${endToEnd.cutsWithinHalfFrame} cuts within half a frame, `
                 + `${endToEnd.cutsWithinOneFrame} within one frame; max `
                 + `${endToEnd.maxDeviationSeconds === null ? "unmeasurable" : `${(endToEnd.maxDeviationSeconds * 1_000).toFixed(3)} ms`}, `

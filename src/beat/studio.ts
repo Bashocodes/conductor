@@ -15,6 +15,7 @@ export interface BeatSyncStudioParams {
   transitions: boolean;
   light: boolean;
   camera: boolean;
+  pixelSort: boolean;
   brandPulse: boolean;
   frameRate: number;
   outputPath: string;
@@ -45,6 +46,7 @@ export interface PreparedBeatSyncPlan {
   cameraKeyframes: Array<{ time: number; value: JsonValue }>;
   lightKeyframes: Array<{ time: number; value: JsonValue }>;
   transitionKeyframes: Array<{ time: number; value: JsonValue }>;
+  pixelSortKeyframes: Array<{ time: number; value: JsonValue }>;
   brandKeyframes: Array<{ time: number; value: JsonValue }>;
 }
 
@@ -52,14 +54,25 @@ function nearestOnsetTime(
   analysis: BeatAnalysis,
   event: BeatSyncEvent,
 ): number {
-  let nearest = analysis.onsets[0]?.timeSeconds ?? event.timeSeconds;
-  let distance = Math.abs(nearest - event.timeSeconds);
+  return nearestOnset(analysis, event)?.timeSeconds ?? event.timeSeconds;
+}
+
+function nearestOnset(
+  analysis: BeatAnalysis,
+  event: BeatSyncEvent,
+): BeatAnalysis["onsets"][number] | undefined {
+  let nearest = analysis.onsets[0];
+  let distance = Math.abs(
+    (nearest?.timeSeconds ?? event.timeSeconds) - event.timeSeconds,
+  );
   for (let index = 1; index < analysis.onsets.length; index += 1) {
-    const time = analysis.onsets[index]?.timeSeconds;
-    if (time === undefined) continue;
-    const candidateDistance = Math.abs(time - event.timeSeconds);
+    const candidate = analysis.onsets[index];
+    if (candidate === undefined) continue;
+    const candidateDistance = Math.abs(
+      candidate.timeSeconds - event.timeSeconds,
+    );
     if (candidateDistance < distance) {
-      nearest = time;
+      nearest = candidate;
       distance = candidateDistance;
     }
   }
@@ -94,6 +107,90 @@ function pulseKeyframes(
   return [...values.entries()]
     .sort(([left], [right]) => left - right)
     .map(([frame, value]) => ({ time: frame / frameRate, value }));
+}
+
+function roundedTime(value: number): number {
+  return Math.round(value * 1_000_000_000) / 1_000_000_000;
+}
+
+/**
+ * Converts the detector's raw spectral-flux strengths to the native effect's
+ * 0–100 percentage contract. The intermediate `normalizedStrength` is the
+ * requested 0–1 analysis envelope; the existing beat importance hierarchy
+ * then gives ordinary beats a restrained range and strong tiers larger bursts.
+ *
+ * Unlike cut boundaries, these keys retain the detector's sample-derived
+ * times. AE evaluates the continuous curve at render time, so the sub-hop
+ * position changes the curve even though visual frames remain frame sampled.
+ */
+function pixelSortEnvelopeKeyframes(
+  analysis: BeatAnalysis,
+  events: BeatSyncEvent[],
+  durationSeconds: number,
+): Array<{ time: number; value: JsonValue }> {
+  // The event list is the output of buildBeatSyncEvents(), so pixel sorting
+  // consumes the same importance classification as cuts and smaller accents.
+  // Only the key time and raw strength come back from the unquantized onset.
+  const samples = events.flatMap((event) => {
+    const onset = nearestOnset(analysis, event);
+    return onset === undefined
+      ? []
+      : [{
+          timeSeconds: onset.timeSeconds,
+          strength: onset.strength,
+          importance: event.importance,
+        }];
+  });
+  const maximumStrength = samples.reduce(
+    (maximum, sample) => Math.max(maximum, sample.strength),
+    0,
+  );
+  const values = new Map<number, number>([
+    [0, 0],
+    [roundedTime(durationSeconds), 0],
+  ]);
+  const setMaximum = (time: number, value: number) => {
+    const boundedTime = roundedTime(
+      Math.max(0, Math.min(durationSeconds, time)),
+    );
+    values.set(boundedTime, Math.max(values.get(boundedTime) ?? 0, value));
+  };
+
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = samples[index]!;
+    if (sample.timeSeconds > durationSeconds) continue;
+    const normalizedStrength =
+      maximumStrength <= Number.EPSILON
+        ? 0
+        : Math.max(0, Math.min(1, sample.strength / maximumStrength));
+    const beatAmount =
+      sample.importance === "downbeat"
+        ? 58 + normalizedStrength * 42
+        : sample.importance === "primary"
+          ? 32 + normalizedStrength * 28
+          : 12 + normalizedStrength * 18;
+    const previousTime = samples[index - 1]?.timeSeconds ?? 0;
+    const nextTime =
+      samples[index + 1]?.timeSeconds ?? durationSeconds;
+    const attackSeconds = Math.min(
+      0.045,
+      Math.max(0.005, (sample.timeSeconds - previousTime) * 0.35),
+    );
+    const releaseSeconds = Math.min(
+      0.18,
+      Math.max(0.02, (nextTime - sample.timeSeconds) * 0.55),
+    );
+    setMaximum(sample.timeSeconds - attackSeconds, 0);
+    setMaximum(sample.timeSeconds, beatAmount);
+    setMaximum(sample.timeSeconds + releaseSeconds, 0);
+  }
+
+  return [...values.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([time, value]) => ({
+      time,
+      value: Math.round(value * 1_000_000) / 1_000_000,
+    }));
 }
 
 function enabledFamilies(
@@ -222,6 +319,11 @@ export function buildBeatSyncStudioPlan(
       0.18,
       false,
     ),
+    pixelSortKeyframes: pixelSortEnvelopeKeyframes(
+      analysis,
+      events,
+      durationSeconds,
+    ),
     brandKeyframes: pulseKeyframes(
       events,
       "brand-pulse",
@@ -249,6 +351,7 @@ export function withBeatSyncPlanParams(
     planCameraKeyframes: plan.cameraKeyframes,
     planLightKeyframes: plan.lightKeyframes,
     planTransitionKeyframes: plan.transitionKeyframes,
+    planPixelSortKeyframes: plan.pixelSortKeyframes,
     planBrandKeyframes: plan.brandKeyframes,
   };
 }

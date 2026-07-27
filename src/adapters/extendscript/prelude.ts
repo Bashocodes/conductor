@@ -203,8 +203,9 @@ function cdEaseKeysAtTimes(prop, times, inInfluence, outInfluence) {
   for (var i = 0; i < times.length; i++) {
     var index = prop.nearestKeyIndex(times[i]);
     if (index < 1 || index > prop.numKeys) { continue; }
-    // A frame is the finest grid AE keys land on; anything further away is a
-    // different keyframe and must keep its own curve.
+    // AE accepts continuous key times. The 1 ms tolerance only absorbs
+    // ExtendScript number transport/lookup noise; it must not snap a
+    // sample-derived effect envelope onto the edit-frame grid.
     if (Math.abs(prop.keyTime(index) - times[i]) > 0.001) { continue; }
     prop.setInterpolationTypeAtKey(index, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);
     prop.setTemporalEaseAtKey(index, cdEase(prop, 0, inInfluence), cdEase(prop, 0, outInfluence));

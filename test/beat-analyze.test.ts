@@ -98,6 +98,21 @@ describe("pure TypeScript beat analysis", () => {
     expect(analysis.estimatedBpm).toBeNull();
   });
 
+  it("amplitude-gates transient-shaped numerical-floor events", () => {
+    const quietClicks = clickTrack(
+      5,
+      [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5],
+    );
+    for (let sample = 0; sample < quietClicks.length; sample += 1) {
+      quietClicks[sample] = (quietClicks[sample] as number) * 1e-7;
+    }
+
+    const analysis = analyzePcm(quietClicks);
+
+    expect(analysis.onsets).toEqual([]);
+    expect(analysis.estimatedBpm).toBeNull();
+  });
+
   it("asks ffmpeg for mono 22050 Hz little-endian float PCM", () => {
     expect(ffmpegPcmArgs("/music/track.wav")).toEqual([
       "-v",

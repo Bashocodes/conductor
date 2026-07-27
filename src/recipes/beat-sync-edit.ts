@@ -19,7 +19,7 @@ export const beatSyncEditRecipe = recipeSchema.parse({
   id: "beat-sync-edit",
   title: "Beat Sync Studio",
   description:
-    "Analyzes an audio track, writes the complete beat map as editable After Effects markers, builds a frame-locked media edit, and verifies every rendered cut against its intended onset.",
+    "Analyzes an audio track, writes the complete beat map as editable After Effects markers, builds a frame-locked media edit with optional native beat-driven pixel sorting, and verifies every rendered cut against its intended onset.",
   targetServers: ["aftereffects"],
   params: {
     audio: {
@@ -60,6 +60,12 @@ export const beatSyncEditRecipe = recipeSchema.parse({
       type: "boolean",
       description: "Allow small camera impacts on non-cut beats.",
       default: true,
+    },
+    pixelSort: {
+      type: "boolean",
+      description:
+        "Drive the native Director Pixel Sort Beat Amount curve from analyzed onset strength.",
+      default: false,
     },
     brandPulse: {
       type: "boolean",
@@ -142,6 +148,13 @@ export const beatSyncEditRecipe = recipeSchema.parse({
     planTransitionKeyframes: {
       type: "json",
       description: "Internal: transition apex accents.",
+      internal: true,
+      default: baselineValue,
+    },
+    planPixelSortKeyframes: {
+      type: "json",
+      description:
+        "Internal: continuous native Pixel Sort Beat Amount envelope.",
       internal: true,
       default: baselineValue,
     },
@@ -318,6 +331,75 @@ export const beatSyncEditRecipe = recipeSchema.parse({
           },
         },
       },
+    },
+    {
+      id: "add-beat-sync-pixel-sort",
+      server: "aftereffects",
+      operation: "applyEffect",
+      precondition: "${params.pixelSort}",
+      args: {
+        targetId: compId,
+        effect: "director-pixel-sort",
+        settings: {
+          Intensity: 0,
+          Phase: 100,
+          "Beat Amount": 0,
+          Seed: 108,
+        },
+        atTimeSeconds: 0,
+        durationSeconds: duration,
+      },
+      verify: {
+        type: "object",
+        required: ["structuredContent"],
+        properties: {
+          structuredContent: {
+            type: "object",
+            required: ["effectId", "appliedParameterCount", "refusedParameters"],
+            properties: {
+              appliedParameterCount: { type: "number", equals: 4 },
+              refusedParameters: { type: "array", equals: [] },
+            },
+          },
+        },
+      },
+      note:
+        "Uses the native effect's exact director-pixel-sort contract; no fallback effect is substituted.",
+    },
+    {
+      id: "keyframe-beat-sync-pixel-sort",
+      server: "aftereffects",
+      operation: "setKeyframes",
+      precondition: "${params.pixelSort}",
+      args: {
+        layerId:
+          "${steps.add-beat-sync-pixel-sort.result.structuredContent.effectId}",
+        property: "Beat Amount",
+        timeMode: "seconds",
+        keyframes: "${params.planPixelSortKeyframes}",
+        easing: {
+          type: "cubic-bezier",
+          profile: "controlled-peak",
+          controlPoints: [0.2, 0.9, 0.8, 0.1],
+        },
+        motionBlur: false,
+      },
+      verify: {
+        type: "object",
+        required: ["structuredContent"],
+        properties: {
+          structuredContent: {
+            type: "object",
+            required: ["applied", "keyCount", "property"],
+            properties: {
+              applied: { type: "boolean", equals: true },
+              property: { type: "string", equals: "Beat Amount" },
+            },
+          },
+        },
+      },
+      note:
+        "Key times retain the sample-derived onset positions; cuts remain independently quantized to edit frames.",
     },
     {
       id: "add-beat-sync-light",

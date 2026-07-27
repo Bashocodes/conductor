@@ -532,8 +532,8 @@ export async function recordBeatSyncVerification(
     journal.error = {
       name: "BeatSyncVerificationError",
       message:
-        "Rendered Beat Sync verification failed. Frame placement and "
-        + "end-to-end alignment are recorded separately in the journal.",
+        "Rendered Beat Sync verification failed. Authored frame placement and "
+        + "rendered A/V conformance are recorded separately in the journal.",
       code: "BEAT_SYNC_VERIFICATION_FAILED",
       details: report,
     };
@@ -569,7 +569,7 @@ export function assertBeatSyncVerification(
         ? "unmeasurable"
         : `${(alignment.maxDeviationSeconds * 1_000).toFixed(3)} ms`;
     const error = new Error(
-      "Beat Sync end-to-end alignment failed: independently detected "
+      "Beat Sync rendered A/V conformance failed: detected "
       + `${alignment.detectedVisualCutCount}/${alignment.expectedVisualCutCount} visual cuts; `
       + `${alignment.cutsWithinOneFrame} within one frame; max ${maximum}.`,
     ) as Error & { code: string; details: BeatSyncVerificationReport };
