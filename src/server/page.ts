@@ -292,11 +292,11 @@ export const CONSOLE_HTML = String.raw`<!doctype html>
 </nav>
 
 <main class="connection-gate" id="connectionGate">
-  <section class="connection-card" aria-live="polite">
-    <h1 id="connectionTitle">Connecting to Conductor…</h1>
-    <p id="connectionMessage">Looking for the Conductor engine on this machine.</p>
+  <section class="connection-card" id="connectionCard" data-connection-state="not-started" aria-live="polite">
+    <h1 id="connectionTitle">Connect to local Conductor</h1>
+    <p id="connectionMessage">Start Conductor on this machine, then connect when you are ready.</p>
     <code class="connection-command" id="startCommand">conductor serve --no-open</code>
-    <button type="button" id="retryConnection" disabled>Try again</button>
+    <button type="button" id="retryConnection">Connect to local Conductor</button>
   </section>
 </main>
 
@@ -385,7 +385,8 @@ const $ = (id) => document.getElementById(id);
    happen to visit from driving your creative applications. */
 let TOKEN = "__CONDUCTOR_SESSION_TOKEN__";
 const API_BASE = "__CONDUCTOR_API_BASE__";
-const CONNECT_TIMEOUT_MS = 5000;
+const HOSTED_CONSOLE = TOKEN === "";
+const UNREACHABLE_TIMEOUT_MS = 5000;
 
 if (!TOKEN && window.location.protocol === "https:") {
   $("startCommand").textContent =
@@ -421,25 +422,93 @@ function browserLoopbackFailureMessage() {
   return "Conductor is not reachable on this machine. Start it with the command below, allow Chrome’s Local Network Access prompt if it appears, then try again.";
 }
 
-async function connectToLocalConductor() {
-  const gate = $("connectionGate");
+function showConnectionState(state) {
+  const card = $("connectionCard");
   const retry = $("retryConnection");
-  gate.hidden = false;
+  $("connectionGate").hidden = false;
   $("console").hidden = true;
-  $("connectionTitle").textContent = "Connecting to Conductor…";
-  $("connectionMessage").textContent = "Looking for the Conductor engine on this machine.";
-  retry.disabled = true;
+  card.dataset.connectionState = state;
 
+  if (state === "not-started") {
+    $("connectionTitle").textContent = "Connect to local Conductor";
+    $("connectionMessage").textContent =
+      "Start Conductor on this machine, then connect when you are ready.";
+    retry.textContent = "Connect to local Conductor";
+    retry.disabled = false;
+    return;
+  }
+  if (state === "awaiting-permission") {
+    $("connectionTitle").textContent = "Allow local Conductor access";
+    $("connectionMessage").textContent =
+      "Chrome may be waiting for your Local Network Access decision. Choose Allow to continue; Conductor will wait here without timing you out.";
+    retry.textContent = "Awaiting permission…";
+    retry.disabled = true;
+    return;
+  }
+
+  $("connectionTitle").textContent = "Local Conductor was refused or is unreachable";
+  $("connectionMessage").textContent = browserLoopbackFailureMessage();
+  retry.textContent = "Try again";
+  retry.disabled = false;
+}
+
+async function loopbackPermissionStatus() {
+  if (!navigator.permissions || typeof navigator.permissions.query !== "function") return null;
+  // Chrome 145 split the old permission into local-network and
+  // loopback-network. The old name remains an alias in current Chrome and is
+  // also useful while older supported releases are still in circulation.
+  for (const name of ["loopback-network", "local-network-access"]) {
+    try {
+      return await navigator.permissions.query({ name });
+    } catch { /* this browser does not expose that permission name */ }
+  }
+  return null;
+}
+
+async function connectToLocalConductor() {
   if (TOKEN && TOKEN !== "__CONDUCTOR_SESSION_TOKEN__") return true;
 
+  showConnectionState("awaiting-permission");
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS);
+  // Start fetch synchronously in the click handler, before the first await, so
+  // Chrome sees the request as user-initiated and can show its LNA prompt.
+  const permissionPromise = loopbackPermissionStatus();
+  const responsePromise = fetch(apiUrl("/api/session"), {
+    cache: "no-store",
+    signal: controller.signal,
+    targetAddressSpace: "loopback",
+  });
+  let permission = null;
+  let timer = null;
+  let permissionChanged = null;
+
+  const armUnreachableTimeout = () => {
+    if (timer !== null) return;
+    timer = setTimeout(() => controller.abort(), UNREACHABLE_TIMEOUT_MS);
+  };
+
   try {
-    const response = await fetch(apiUrl("/api/session"), {
-      cache: "no-store",
-      signal: controller.signal,
-      targetAddressSpace: "loopback",
-    });
+    permission = await permissionPromise;
+    if (permission === null || permission.state === "granted") {
+      armUnreachableTimeout();
+    } else if (permission.state === "denied") {
+      controller.abort();
+    } else {
+      // A prompt is a human decision, not a network timeout. Only start the
+      // unreachable timer after Chrome reports that permission was granted.
+      permissionChanged = () => {
+        if (permission.state === "granted") {
+          $("connectionMessage").textContent =
+            "Permission accepted. Looking for the Conductor engine on this machine.";
+          armUnreachableTimeout();
+        } else if (permission.state === "denied") {
+          controller.abort();
+        }
+      };
+      permission.addEventListener("change", permissionChanged);
+    }
+
+    const response = await responsePromise;
     const body = await response.json();
     if (!response.ok || typeof body.token !== "string") {
       throw new Error(body.error || ("HTTP " + response.status));
@@ -448,12 +517,13 @@ async function connectToLocalConductor() {
     return true;
   } catch (error) {
     console.warn("Conductor loopback probe failed:", error);
-    $("connectionTitle").textContent = "Start Conductor on this machine";
-    $("connectionMessage").textContent = browserLoopbackFailureMessage();
-    retry.disabled = false;
+    showConnectionState("refused-unreachable");
     return false;
   } finally {
-    clearTimeout(timer);
+    if (timer !== null) clearTimeout(timer);
+    if (permission !== null && permissionChanged !== null) {
+      permission.removeEventListener("change", permissionChanged);
+    }
   }
 }
 
@@ -2221,8 +2291,12 @@ $("btnRun").onclick = async () => {
 
 let starting = false;
 
-async function start() {
+async function start(userInitiated) {
   if (starting) return;
+  if (HOSTED_CONSOLE && !userInitiated && !TOKEN) {
+    showConnectionState("not-started");
+    return;
+  }
   starting = true;
   if (!(await connectToLocalConductor())) {
     starting = false;
@@ -2246,8 +2320,9 @@ async function start() {
   await checkDoctor();
 }
 
-$("retryConnection").onclick = () => { void start(); };
-void start();
+$("retryConnection").onclick = () => { void start(true); };
+if (HOSTED_CONSOLE) showConnectionState("not-started");
+else void start(false);
 </script>
 </body>
 </html>

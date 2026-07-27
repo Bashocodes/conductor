@@ -119,7 +119,28 @@ describe("conductor ui server", () => {
     expect(html).toContain("conductor serve --no-open");
     expect(html).toContain("CONDUCTOR_PUBLIC_ORIGIN=");
     expect(html).toContain('"CONDUCTOR_PUBLIC_ORIGIN=" + window.location.origin');
+    expect(html).toContain('data-connection-state="not-started"');
+    expect(html).toContain("Connect to local Conductor");
+    expect(html).toContain('showConnectionState("awaiting-permission")');
+    expect(html).toContain('showConnectionState("refused-unreachable")');
+    expect(html).toContain('["loopback-network", "local-network-access"]');
+    expect(html).toContain('permission.addEventListener("change", permissionChanged)');
+    expect(html).toContain("else void start(false)");
+    expect(html).not.toContain("CONNECT_TIMEOUT_MS");
     expect(html).not.toContain("__CONDUCTOR_API_BASE__");
+  });
+
+  it("keeps local same-origin use automatic while hosted use waits for a click", () => {
+    const local = renderConsoleHtml({ sessionToken: "local-token", apiBase: "" });
+    const hosted = renderConsoleHtml({
+      sessionToken: "",
+      apiBase: "http://127.0.0.1:4173/",
+    });
+
+    expect(local).toContain('const HOSTED_CONSOLE = TOKEN === ""');
+    expect(local).toContain('else void start(false)');
+    expect(hosted).toContain('$("retryConnection").onclick = () => { void start(true); }');
+    expect(hosted).toContain('if (HOSTED_CONSOLE) showConnectionState("not-started")');
   });
 
   it("keeps the console template free of characters that TypeScript would eat", () => {
