@@ -5,7 +5,14 @@ import { createReadStream } from "node:fs";
 import { promisify } from "node:util";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
-import { mkdir, readdir, rename, stat, unlink } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  stat,
+  unlink,
+} from "node:fs/promises";
 
 import { createAdapterRegistryFromConfig } from "../adapters/registry.js";
 import { RecipeEngine } from "../engine/engine.js";
@@ -18,9 +25,25 @@ import {
   CINEMATIC_LOOKS,
   DEFAULT_SAMPLE_LOGO,
 } from "../recipes/cinematic-look-lab.js";
-import { getRecipe, listRecipes } from "../recipes/index.js";
+import {
+  getRecipe,
+  listRecipes,
+  prepareRecipeRun,
+} from "../recipes/index.js";
 import { renderConsoleHtml } from "./page.js";
 import { createPrivacyCleanCopy } from "./privacy.js";
+import {
+  analyzeAudioFile,
+  type BeatAnalysis,
+} from "../beat/analyze.js";
+import {
+  assertBeatSyncAlignment,
+  measureBeatSyncAlignment,
+  probeRenderedFrameRate,
+  recordBeatSyncAlignment,
+  type BeatSyncAlignmentReport,
+  type BeatSyncCutPlacement,
+} from "../beat/verify.js";
 
 /**
  * A local control panel for Conductor.
@@ -50,6 +73,11 @@ interface PendingRender {
   renderPath: string;
   postProcess?: "hevc-hlg";
   templateApplied: string | null;
+  beatSync?: {
+    journalPath: string;
+    requestedFrameRate: number;
+    cuts: BeatSyncCutPlacement[];
+  };
 }
 
 /**
@@ -199,13 +227,26 @@ async function chooseFileViaFinder(options: {
   mode: "open-file" | "save-file";
   prompt: string;
   suggestedName?: string;
-}): Promise<{ path?: string; cancelled?: boolean }> {
+  multiple?: boolean;
+}): Promise<{
+  path?: string;
+  paths?: string[];
+  cancelled?: boolean;
+}> {
   // The prompt is the only caller-influenced value; quotes are escaped so it
   // cannot terminate the AppleScript string.
   const quote = (value: string) => `"${value.replace(/["\\]/g, "\\$&")}"`;
   const script =
-    options.mode === "open-file"
-      ? `POSIX path of (choose file with prompt ${quote(options.prompt)})`
+    options.mode === "open-file" && options.multiple === true
+      ? `set chosenFiles to choose file with prompt ${quote(options.prompt)} with multiple selections allowed
+set chosenPaths to {}
+repeat with chosenFile in chosenFiles
+  set end of chosenPaths to POSIX path of chosenFile
+end repeat
+set AppleScript's text item delimiters to linefeed
+return chosenPaths as text`
+      : options.mode === "open-file"
+        ? `POSIX path of (choose file with prompt ${quote(options.prompt)})`
       : `POSIX path of (choose file name with prompt ${quote(options.prompt)}` +
         (options.suggestedName === undefined
           ? ")"
@@ -215,6 +256,14 @@ async function chooseFileViaFinder(options: {
     const { stdout } = await execFileAsync("/usr/bin/osascript", ["-e", script], {
       timeout: 300_000,
     });
+    if (options.multiple === true) {
+      return {
+        paths: stdout
+          .split(/\r?\n/)
+          .map((path) => path.trim())
+          .filter(Boolean),
+      };
+    }
     return { path: stdout.trim() };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -607,6 +656,28 @@ export async function startConductorServer(options: ServeOptions): Promise<{
   const sessionToken = randomUUID();
   const pendingRenders = new Map<number, PendingRender>();
   const previewMedia = new Map<string, PreviewEntry>();
+  const beatAnalysisCache = new Map<
+    string,
+    { size: number; modifiedMs: number; analysis: BeatAnalysis }
+  >();
+  const cachedBeatAnalysis = async (audioPath: string): Promise<BeatAnalysis> => {
+    const file = await stat(audioPath);
+    const cached = beatAnalysisCache.get(audioPath);
+    if (
+      cached !== undefined &&
+      cached.size === file.size &&
+      cached.modifiedMs === file.mtimeMs
+    ) {
+      return cached.analysis;
+    }
+    const analysis = await analyzeAudioFile(audioPath);
+    beatAnalysisCache.set(audioPath, {
+      size: file.size,
+      modifiedMs: file.mtimeMs,
+      analysis,
+    });
+    return analysis;
+  };
   /**
    * Local files the console is allowed to display.
    *
@@ -719,15 +790,36 @@ export async function startConductorServer(options: ServeOptions): Promise<{
       return;
     }
 
+    if (
+      (url.pathname === "/console.css" ||
+        url.pathname === "/console.js") &&
+      request.method === "GET"
+    ) {
+      const filename =
+        url.pathname === "/console.css" ? "console.css" : "console.js";
+      response.writeHead(200, {
+        "content-type":
+          filename.endsWith(".css")
+            ? "text/css; charset=utf-8"
+            : "text/javascript; charset=utf-8",
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+      });
+      response.end(
+        await readFile(new URL(`./${filename}`, import.meta.url), "utf8"),
+      );
+      return;
+    }
+
     if (url.pathname === "/" || url.pathname === "/index.html") {
       response.writeHead(200, {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
         "x-content-type-options": "nosniff",
         "x-frame-options": "DENY",
-        // Nothing external loads; say so, so an injection has nowhere to go.
+        // The two same-origin console assets are the only executable resources.
         "content-security-policy":
-          "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; media-src 'self'; form-action 'none'; frame-ancestors 'none'",
+          "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; media-src 'self'; form-action 'none'; frame-ancestors 'none'",
         "permissions-policy": "local-network=(self), loopback-network=(self)",
         "referrer-policy": "no-referrer",
       });
@@ -751,7 +843,11 @@ export async function startConductorServer(options: ServeOptions): Promise<{
           id: recipe.id,
           title: recipe.title,
           description: recipe.description,
-          params: recipe.params,
+          params: Object.fromEntries(
+            Object.entries(recipe.params).filter(
+              ([_name, definition]) => definition.internal !== true,
+            ),
+          ),
         })),
       });
       return;
@@ -1127,8 +1223,40 @@ export async function startConductorServer(options: ServeOptions): Promise<{
         sendJson(response, 400, { error: `Unknown recipe '${String(body.recipeId)}'` });
         return;
       }
-      // A dry run never connects to anything, so it is always safe to click.
-      sendJson(response, 200, createDryRunPlan(recipe, body.params ?? {}));
+      // Preparation may decode local audio, but a dry run still never connects
+      // to After Effects or mutates a project.
+      const prepared = await prepareRecipeRun(recipe, body.params ?? {}, {
+        analyzeAudio: cachedBeatAnalysis,
+      });
+      sendJson(
+        response,
+        200,
+        createDryRunPlan(prepared.recipe, prepared.params),
+      );
+      return;
+    }
+
+    if (
+      url.pathname === "/api/beat-sync/analyze" &&
+      request.method === "POST"
+    ) {
+      const body = (await readJsonBody(request)) as {
+        params?: Record<string, unknown>;
+      };
+      const recipe = getRecipe("beat-sync-edit");
+      if (recipe === undefined) {
+        sendJson(response, 500, { error: "Beat Sync Studio is not registered." });
+        return;
+      }
+      const prepared = await prepareRecipeRun(recipe, body.params ?? {}, {
+        analyzeAudio: cachedBeatAnalysis,
+      });
+      sendJson(response, 200, {
+        beatCount: prepared.params.planBeatCount,
+        cutCount: prepared.params.planCutCount,
+        estimatedBpm: prepared.params.planEstimatedBpm,
+        durationSeconds: prepared.params.planDurationSeconds,
+      });
       return;
     }
 
@@ -1137,16 +1265,19 @@ export async function startConductorServer(options: ServeOptions): Promise<{
         mode?: string;
         prompt?: string;
         suggestedName?: string;
+        multiple?: boolean;
       };
       const mode = body.mode === "save-file" ? "save-file" : "open-file";
       const chosen = await chooseFileViaFinder({
         mode,
         prompt: String(body.prompt ?? "Choose a file"),
+        multiple: body.multiple === true,
         ...(body.suggestedName === undefined ? {} : { suggestedName: String(body.suggestedName) }),
       });
       // Picking a file in Finder is the person granting Conductor sight of it;
       // that grant is what /api/local-image checks against later.
       if (chosen.path !== undefined) displayableFiles.add(chosen.path);
+      for (const path of chosen.paths ?? []) displayableFiles.add(path);
       sendJson(response, 200, chosen);
       return;
     }
@@ -1382,6 +1513,7 @@ export async function startConductorServer(options: ServeOptions): Promise<{
 
     const delivered: string[] = [];
     const deliveredIds: Array<{ id: string; outputPath: string }> = [];
+    const beatSyncAlignment: BeatSyncAlignmentReport[] = [];
     for (let position = 0; position < requestedIndices.length; position += 1) {
       const renderQueueIndex = requestedIndices[position] as number;
       const queuedItem = queuedItems.find((item) => item.index === renderQueueIndex);
@@ -1454,6 +1586,38 @@ export async function startConductorServer(options: ServeOptions): Promise<{
           await assertRenderedFile(pending.outputPath);
         }
 
+        if (pending.beatSync !== undefined) {
+          const ffprobe = await findExecutable(FFPROBE_CANDIDATES);
+          if (ffprobe === undefined) {
+            throw new Error(
+              "ffprobe is required for beat-sync alignment verification, but it was not found.",
+            );
+          }
+          const renderedFrameRate = await probeRenderedFrameRate(
+            pending.outputPath,
+            ffprobe,
+          );
+          const alignment = measureBeatSyncAlignment(
+            pending.beatSync.cuts,
+            pending.beatSync.requestedFrameRate,
+            renderedFrameRate,
+          );
+          await recordBeatSyncAlignment(
+            pending.beatSync.journalPath,
+            alignment,
+          );
+          beatSyncAlignment.push(alignment);
+          send("alignment", alignment);
+          process.stdout.write(
+            alignment.status === "not-applicable"
+              ? "Beat Sync alignment: no cut events were enabled; no cut-alignment claim was made.\n"
+              : `Beat Sync alignment: ${alignment.cutsWithinHalfFrame} of ${alignment.cutCount} cuts within half a frame; `
+                + `max ${(alignment.maxDeviationSeconds * 1_000).toFixed(3)} ms, `
+                + `mean ${(alignment.meanDeviationSeconds * 1_000).toFixed(3)} ms.\n`,
+          );
+          assertBeatSyncAlignment(alignment);
+        }
+
         delivered.push(pending.outputPath);
         // Addressable by id so the console can offer to play it without ever
         // handing a path back to the server.
@@ -1488,6 +1652,9 @@ export async function startConductorServer(options: ServeOptions): Promise<{
       outputPaths: delivered,
       deliveries: deliveredIds,
       projectPath,
+      ...(beatSyncAlignment.length === 0
+        ? {}
+        : { beatSyncAlignment }),
     });
     response.end();
   }
@@ -1538,11 +1705,14 @@ export async function startConductorServer(options: ServeOptions): Promise<{
     const config = await loadConductorConfig(options.configPath);
     const clients = new McpClientManager(config);
     try {
+      const prepared = await prepareRecipeRun(recipe, params, {
+        analyzeAudio: cachedBeatAnalysis,
+      });
       const result = await new RecipeEngine({
         clientProvider: clients,
         adapters: createAdapterRegistryFromConfig(config),
         onStep: (step: JournalStep) => send("step", step),
-      }).run(recipe, params);
+      }).run(prepared.recipe, prepared.params);
       /*
        * A recipe QUEUES a render; it does not run one. Saying "finished" and
        * showing the path someone typed sent them looking for a file that does
@@ -1557,6 +1727,48 @@ export async function startConductorServer(options: ServeOptions): Promise<{
         postProcess?: "hevc-hlg";
         templateApplied: string | null;
       }> = [];
+      let beatSync:
+        | {
+            journalPath: string;
+            requestedFrameRate: number;
+            cuts: BeatSyncCutPlacement[];
+          }
+        | undefined;
+      if (recipe.id === "beat-sync-edit") {
+        const placementPayload = (
+          result.outputs["place-beat-sync-media"] as {
+            structuredContent?: { placements?: unknown };
+          } | undefined
+        )?.structuredContent?.placements;
+        const cuts = Array.isArray(placementPayload)
+          ? placementPayload.flatMap((placement) => {
+              const value = placement as Record<string, unknown>;
+              return Number.isInteger(value.cutFrame) &&
+                Number.isInteger(value.actualFrame) &&
+                typeof value.intendedOnsetSeconds === "number"
+                ? [{
+                    cutFrame: value.cutFrame as number,
+                    actualFrame: value.actualFrame as number,
+                    intendedOnsetSeconds: value.intendedOnsetSeconds,
+                  }]
+                : [];
+            })
+          : [];
+        const plannedCutCount = prepared.params.planCutCount;
+        if (
+          typeof plannedCutCount !== "number" ||
+          cuts.length !== plannedCutCount
+        ) {
+          throw new Error(
+            `After Effects reported ${cuts.length} placed cuts for a ${String(plannedCutCount)}-cut beat plan.`,
+          );
+        }
+        beatSync = {
+          journalPath: result.journalPath,
+          requestedFrameRate: prepared.params.frameRate as number,
+          cuts,
+        };
+      }
       for (const value of Object.values(result.outputs)) {
         const payload = (value as { structuredContent?: Record<string, unknown> })
           ?.structuredContent;
@@ -1575,8 +1787,17 @@ export async function startConductorServer(options: ServeOptions): Promise<{
               : {}),
             templateApplied:
               typeof payload.templateApplied === "string" ? payload.templateApplied : null,
+            ...(beatSync === undefined ? {} : { beatSync }),
           };
-          queued.push(entry);
+          queued.push({
+            outputPath: entry.outputPath,
+            renderPath: entry.renderPath,
+            renderQueueIndex: entry.renderQueueIndex,
+            ...(entry.postProcess === undefined
+              ? {}
+              : { postProcess: entry.postProcess }),
+            templateApplied: entry.templateApplied,
+          });
           pendingRenders.set(entry.renderQueueIndex, entry);
         }
       }

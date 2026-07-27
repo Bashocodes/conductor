@@ -85,6 +85,15 @@ export class FakeAeServer implements McpServerConnection {
             durationSeconds: args.durationSeconds,
           },
         };
+      case "fake_add_markers":
+        return {
+          structuredContent: {
+            applied: true,
+            targetId: args.targetId,
+            markerCount: Array.isArray(args.markers) ? args.markers.length : 0,
+            markers: args.markers,
+          },
+        };
       case "fake_add_text_layer":
         this.#layerCount += 1;
         return {
@@ -95,12 +104,37 @@ export class FakeAeServer implements McpServerConnection {
         };
       case "fake_add_media_layer":
         this.#layerCount += 1;
+        if (Array.isArray(args.segments)) {
+          return {
+            structuredContent: {
+              layerId: `media-${this.#layerCount}`,
+              precompId: `precomp-${this.#layerCount}`,
+              placements: args.segments.map((segment, index) => {
+                const value = segment as Record<string, JsonValue>;
+                return {
+                  layerId: `segment-${this.#layerCount}-${index + 1}`,
+                  path: value.path,
+                  actualTimeSeconds: value.timelineInSeconds,
+                  actualFrame: value.cutFrame ?? 0,
+                  ...(value.cutFrame === undefined
+                    ? {}
+                    : { cutFrame: value.cutFrame }),
+                  ...(value.intendedOnsetSeconds === undefined
+                    ? {}
+                    : { intendedOnsetSeconds: value.intendedOnsetSeconds }),
+                };
+              }),
+            },
+          };
+        }
         return {
           structuredContent: {
             layerId: `media-${this.#layerCount}`,
             widthPixels: 240,
             position: [args.customXPercent, args.customYPercent],
             opacity: args.opacity,
+            actualTimeSeconds: args.timelineInSeconds ?? 0,
+            actualFrame: 0,
           },
         };
       case "fake_precompose":

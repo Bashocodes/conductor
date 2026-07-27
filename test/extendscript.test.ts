@@ -65,6 +65,16 @@ const KEYFRAMES = {
 
 const ALL_OPERATIONS: Array<[ToolOperation, Record<string, JsonValue>]> = [
   ["createComp", CREATE_COMP],
+  [
+    "addMarkers",
+    {
+      targetId: "27",
+      markers: [
+        { timeSeconds: 0.5, comment: "beat · frame 15" },
+        { timeSeconds: 1, comment: "downbeat · frame 30" },
+      ],
+    },
+  ],
   ["addTextLayer", TEXT_LAYER as unknown as Record<string, JsonValue>],
   [
     "addMediaLayer",
@@ -212,6 +222,20 @@ describe("craft rules are not optional", () => {
     expect(script("createComp", CREATE_COMP)).toContain("comp.motionBlur = true;");
   });
 
+  it("writes and reads back inspectable composition markers", () => {
+    const source = script("addMarkers", {
+      targetId: "27",
+      markers: [
+        { timeSeconds: 0.5, comment: "beat · frame 15" },
+        { timeSeconds: 1, comment: "downbeat · frame 30" },
+      ],
+    });
+    expect(source).toContain("target.markerProperty");
+    expect(source).toContain("new MarkerValue");
+    expect(source).toContain("markerProp.keyTime(key)");
+    expect(source).toContain("markerCount: verified.length");
+  });
+
   it("sizes and positions a logo relative to the composition", () => {
     const source = script("addMediaLayer", {
       compId: "27",
@@ -227,6 +251,28 @@ describe("craft rules are not optional", () => {
     expect(source).toContain("comp.width * (5.93 / 100)");
     expect(source).toContain("xPercent = 92.2222");
     expect(source).toContain("ADBE Opacity");
+  });
+
+  it("omits absent cut evidence instead of returning invalid JSON", () => {
+    const source = script("addMediaLayer", {
+      compId: "27",
+      name: "Beat Sync Media Edit",
+      segments: [{
+        path: "/tmp/clip.mp4",
+        name: "Opening",
+        timelineInSeconds: 0,
+        timelineOutSeconds: 1,
+        sourceInSeconds: 0,
+      }],
+      widthPercent: 100,
+      positionPreset: "Custom",
+      customXPercent: 50,
+      customYPercent: 50,
+      opacity: 100,
+      motionBlur: true,
+    });
+    expect(source).toContain("if (segment.cutFrame !== undefined)");
+    expect(source).not.toContain("cutFrame: segment.cutFrame");
   });
 
   it("converts normalized watermark positions into comp coordinates", () => {

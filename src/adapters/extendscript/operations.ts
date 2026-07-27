@@ -84,6 +84,49 @@ function renderCreateComp(args: ToolArgs<"createComp">): string {
   );
 }
 
+function renderAddMarkers(args: ToolArgs<"addMarkers">): string {
+  return wrap(
+    "add markers",
+    `  var targetId = ${es3Literal(args.targetId)};
+  var target = null;
+  try { target = app.project.itemByID(parseInt(targetId, 10)); }
+  catch (itemError) { target = null; }
+  var markerProp = null;
+  if (target instanceof CompItem) {
+    markerProp = target.markerProperty;
+  } else {
+    target = cdFindLayer(targetId);
+    markerProp = target.property("ADBE Marker");
+  }
+  if (markerProp === null) {
+    throw new Error("Target " + targetId + " does not expose markers");
+  }
+
+  var requested = ${es3Literal(args.markers as unknown as JsonValue)};
+  for (var i = 0; i < requested.length; i++) {
+    markerProp.setValueAtTime(
+      requested[i].timeSeconds,
+      new MarkerValue(requested[i].comment)
+    );
+  }
+
+  var verified = [];
+  for (var key = 1; key <= markerProp.numKeys; key++) {
+    var value = markerProp.keyValue(key);
+    verified.push({
+      timeSeconds: markerProp.keyTime(key),
+      comment: value.comment
+    });
+  }
+  return {
+    applied: verified.length >= requested.length,
+    targetId: String(target.id),
+    markerCount: verified.length,
+    markers: verified
+  };`,
+  );
+}
+
 const SIZE_PRESETS: Record<string, number> = {
   watermark: 28,
   small: 48,
@@ -138,19 +181,101 @@ function renderAddTextLayer(args: ToolArgs<"addTextLayer">): string {
 }
 
 function renderAddMediaLayer(args: ToolArgs<"addMediaLayer">): string {
+  if ("segments" in args) {
+    return wrap(
+      "add media edit",
+      `  var comp = cdComp(${es3Literal(args.compId)});
+  var segments = ${es3Literal(args.segments as unknown as JsonValue)};
+  var edit = app.project.items.addComp(
+    ${es3Literal(args.name)},
+    comp.width,
+    comp.height,
+    comp.pixelAspect,
+    comp.duration,
+    comp.frameRate
+  );
+  edit.motionBlur = true;
+  var placements = [];
+  for (var i = 0; i < segments.length; i++) {
+    var segment = segments[i];
+    var footage = cdImportFootage(segment.path);
+    if (!footage.hasVideo || footage.width <= 0) {
+      throw new Error("Beat-sync media must be an image or video with dimensions.");
+    }
+    var layer = edit.layers.add(footage);
+    layer.name = segment.name;
+    layer.audioEnabled = false;
+    layer.motionBlur = ${args.motionBlur ? "true" : "false"};
+    layer.startTime = segment.timelineInSeconds - segment.sourceInSeconds;
+    layer.inPoint = segment.timelineInSeconds;
+    layer.outPoint = segment.timelineOutSeconds;
+
+    // Beat-sync footage fills the delivered frame. A logo uses the single
+    // layer branch below, where width percentage and corner presets matter.
+    var cover = Math.max(edit.width / footage.width, edit.height / footage.height) * 100;
+    var scale = layer.property("ADBE Transform Group").property("ADBE Scale");
+    var scaleValue = scale.value;
+    var scaled = [];
+    for (var s = 0; s < scaleValue.length; s++) { scaled.push(cover); }
+    scale.setValue(scaled);
+    layer.property("ADBE Transform Group").property("ADBE Position")
+      .setValue([edit.width / 2, edit.height / 2]);
+    layer.property("ADBE Transform Group").property("ADBE Opacity").setValue(${args.opacity});
+
+    var placement = {
+      layerId: String(layer.id),
+      path: segment.path,
+      actualTimeSeconds: layer.inPoint,
+      actualFrame: Math.round(layer.inPoint / edit.frameDuration)
+    };
+    // The bridge serializes an undefined object member as the literal word
+    // "undefined", which is not JSON. The leading segment has no intended cut,
+    // so omit those optional fields entirely and keep verification parseable.
+    if (segment.cutFrame !== undefined) { placement.cutFrame = segment.cutFrame; }
+    if (segment.intendedOnsetSeconds !== undefined) {
+      placement.intendedOnsetSeconds = segment.intendedOnsetSeconds;
+    }
+    placements.push(placement);
+  }
+  var host = comp.layers.add(edit);
+  host.name = ${es3Literal(args.name)};
+  host.motionBlur = ${args.motionBlur ? "true" : "false"};
+  return {
+    layerId: String(host.id),
+    precompId: String(edit.id),
+    name: host.name,
+    placements: placements
+  };`,
+    );
+  }
+
   return wrap(
     "add media layer",
     `  var comp = cdComp(${es3Literal(args.compId)});
   var footage = cdImportFootage(${es3Literal(args.path)});
-  if (!footage.hasVideo || footage.width <= 0) {
+  var kind = ${es3Literal(args.kind)};
+  if (kind === "audio" && !footage.hasAudio) {
+    throw new Error("Beat-sync audio media has no audio stream.");
+  }
+  if (kind === "visual" && (!footage.hasVideo || footage.width <= 0)) {
     throw new Error("Brand media must be an image or video with dimensions.");
   }
   var layer = comp.layers.add(footage);
   layer.name = ${es3Literal(args.name)};
   layer.motionBlur = ${args.motionBlur ? "true" : "false"};
-  layer.startTime = 0;
-  layer.inPoint = 0;
-  layer.outPoint = comp.duration;
+  layer.startTime = ${args.timelineInSeconds} - ${args.sourceInSeconds};
+  layer.inPoint = ${args.timelineInSeconds};
+  layer.outPoint = ${args.timelineOutSeconds ?? "comp.duration"};
+  if (kind === "audio") {
+    layer.audioEnabled = true;
+    return {
+      layerId: String(layer.id),
+      name: layer.name,
+      kind: kind,
+      actualTimeSeconds: layer.inPoint,
+      actualFrame: Math.round(layer.inPoint / comp.frameDuration)
+    };
+  }
 
   var targetWidth = comp.width * (${args.widthPercent} / 100);
   var scalePercent = (targetWidth / footage.width) * 100;
@@ -175,7 +300,9 @@ function renderAddMediaLayer(args: ToolArgs<"addMediaLayer">): string {
     name: layer.name,
     widthPixels: targetWidth,
     position: [xPercent, yPercent],
-    opacity: ${args.opacity}
+    opacity: ${args.opacity},
+    actualTimeSeconds: layer.inPoint,
+    actualFrame: Math.round(layer.inPoint / comp.frameDuration)
   };`,
   );
 }
@@ -545,6 +672,7 @@ const RENDERERS: {
   [Operation in ToolOperation]: (args: ToolArgs<Operation>) => string;
 } = {
   createComp: renderCreateComp,
+  addMarkers: renderAddMarkers,
   addTextLayer: renderAddTextLayer,
   addMediaLayer: renderAddMediaLayer,
   setKeyframes: renderSetKeyframes,

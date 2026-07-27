@@ -8,6 +8,10 @@ export const fakeServerAdapterConfig = adapterConfigSchema.parse({
       tool: "fake_create_comp",
       argsTemplate: "${args}",
     },
+    addMarkers: {
+      tool: "fake_add_markers",
+      argsTemplate: "${args}",
+    },
     addTextLayer: {
       tool: "fake_add_text_layer",
       argsTemplate: "${args}",

@@ -17,7 +17,11 @@ import {
   ConductorConfigError,
   loadConductorConfig,
 } from "./mcp/config.js";
-import { listRecipes, getRecipe } from "./recipes/index.js";
+import {
+  listRecipes,
+  getRecipe,
+  prepareRecipeRun,
+} from "./recipes/index.js";
 import { startConductorServer } from "./server/serve.js";
 import type { ParamDefinition } from "./schema/recipe.js";
 import { createAdapterRegistryFromConfig } from "./adapters/registry.js";
@@ -173,6 +177,7 @@ export function createProgram(
           `${recipe.id} — ${recipe.title}\n  ${recipe.description}\n`,
         );
         for (const [name, definition] of Object.entries(recipe.params)) {
+          if (definition.internal === true) continue;
           io.stdout.write(`  --param ${name}=…  ${describeParam(definition)}\n`);
         }
       }
@@ -204,8 +209,9 @@ export function createProgram(
 
         const params = parseParamAssignments(options.param);
         if (options.dryRun === true) {
+          const prepared = await prepareRecipeRun(recipe, params);
           io.stdout.write(
-            `${JSON.stringify(createDryRunPlan(recipe, params), null, 2)}\n`,
+            `${JSON.stringify(createDryRunPlan(prepared.recipe, prepared.params), null, 2)}\n`,
           );
           return;
         }
@@ -217,10 +223,11 @@ export function createProgram(
         const clients = new McpClientManager(config);
         const adapters = createAdapterRegistryFromConfig(config);
         try {
+          const prepared = await prepareRecipeRun(recipe, params);
           const result = await new RecipeEngine({
             clientProvider: clients,
             adapters,
-          }).run(recipe, params);
+          }).run(prepared.recipe, prepared.params);
           io.stdout.write(
             `Run ${result.runId} completed.\nJournal: ${result.journalPath}\n`,
           );
@@ -274,10 +281,11 @@ export function createProgram(
             const clients = new McpClientManager(config);
             const adapters = createAdapterRegistryFromConfig(config);
             try {
+              const prepared = await prepareRecipeRun(recipe, params);
               return await new RecipeEngine({
                 clientProvider: clients,
                 adapters,
-              }).run(recipe, params, {
+              }).run(prepared.recipe, prepared.params, {
                 proposalProvenance: provenance,
               });
             } finally {

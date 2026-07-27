@@ -18,20 +18,24 @@ equally loud gimmick.
 
 ## Required analysis order
 
-1. Run Adobe Beat Detection in After Effects to create the first marker pass.
-2. Analyze the same audio with HPSS and a dynamic beat tracker.
-3. Cross-check pulse stability with PLP.
-4. Reconcile the passes and classify ordinary beats, primary beats, and
-   downbeats.
-5. Quantize every accepted time to the source frame rate.
-6. Save the report beside the project before building the edit.
+1. Decode the audio to mono PCM and run Conductor's onset and tempo analysis.
+   This analysis is the source of truth for the edit.
+2. Classify accepted onsets as ordinary beats, primary beats, and downbeats.
+3. Quantize the accepted times to the source frame rate with
+   [`src/beat/plan.ts`](../src/beat/plan.ts).
+4. Save the complete quantized map as After Effects markers before building the
+   edit, so a person can inspect and adjust it.
+5. When an After Effects marker-detection command is available and returns
+   usable markers, it may be run as an optional corroborating pass. An empty or
+   unavailable result does not replace or invalidate Conductor's analysis.
+6. After rendering, measure every actual cut against its intended onset, save
+   the alignment report in the run journal, and fail the run when any cut is
+   more than one frame away.
 
-Conductor must not claim an edit is beat-synced when the Adobe marker pass was
-skipped. The pure planning core in
-[`src/beat/plan.ts`](../src/beat/plan.ts) already locks detector output to exact
-frames and maps the hierarchy to edit events. Audio analysis, media-bin UI,
-short comparison renders, and the AE edit recipe are the next implementation
-stage.
+Conductor must never claim an edit is beat-synced without a **VERIFIED**
+post-render alignment measurement. Detector names, marker creation, and a
+plausible-looking timeline are not evidence by themselves; the measured
+cut-to-onset deltas are.
 
 ## Planned Conductor controls
 

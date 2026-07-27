@@ -75,6 +75,20 @@ export interface BeatSyncEvent {
   >;
 }
 
+export type BeatSyncDensity = "restrained" | "active" | "impact";
+export type BeatSyncEventFamily =
+  | "cuts"
+  | "transitions"
+  | "light"
+  | "camera"
+  | "brand-pulse";
+
+export interface BeatSyncEventOptions {
+  brandPulse?: boolean;
+  density?: BeatSyncDensity;
+  allowedEventFamilies?: BeatSyncEventFamily[];
+}
+
 /**
  * Defines the edit contract before any AE work begins. Strong beats carry cuts
  * and transition peaks; ordinary beats carry restrained light/camera accents.
@@ -83,16 +97,58 @@ export interface BeatSyncEvent {
  */
 export function buildBeatSyncEvents(
   beats: QuantizedBeat[],
-  options: { brandPulse?: boolean } = {},
+  options: BeatSyncEventOptions = {},
 ): BeatSyncEvent[] {
   return beats.map((beat) => {
-    const targets: BeatSyncEvent["targets"] =
-      beat.importance === "beat"
-        ? ["light-accent", "camera-impact"]
-        : ["cut", "transition-apex", "light-accent"];
+    let targets: BeatSyncEvent["targets"];
+    if (options.density === "restrained") {
+      targets =
+        beat.importance === "downbeat"
+          ? ["cut", "transition-apex", "light-accent"]
+          : beat.importance === "primary"
+            ? ["light-accent"]
+            : [];
+    } else if (options.density === "active") {
+      targets =
+        beat.importance === "beat"
+          ? ["light-accent", "camera-impact"]
+          : ["cut", "transition-apex", "light-accent"];
+    } else {
+      // `impact` and the legacy no-option call preserve the original hierarchy:
+      // strong beats cut; ordinary beats receive light/camera accents only.
+      targets =
+        beat.importance === "beat"
+          ? ["light-accent", "camera-impact"]
+          : ["cut", "transition-apex", "light-accent"];
+    }
+    if (
+      options.density === "impact" &&
+      beat.importance !== "beat" &&
+      !targets.includes("camera-impact")
+    ) {
+      targets.push("camera-impact");
+    }
     if (options.brandPulse === true && beat.importance !== "beat") {
       targets.push("brand-pulse");
     }
-    return { ...beat, targets };
+
+    const allowed = options.allowedEventFamilies;
+    const filtered =
+      allowed === undefined
+        ? targets
+        : targets.filter((target) => {
+            const family: BeatSyncEventFamily =
+              target === "cut"
+                ? "cuts"
+                : target === "transition-apex"
+                  ? "transitions"
+                  : target === "light-accent"
+                    ? "light"
+                    : target === "camera-impact"
+                      ? "camera"
+                      : "brand-pulse";
+            return allowed.includes(family);
+          });
+    return { ...beat, targets: filtered };
   });
 }

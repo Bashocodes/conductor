@@ -5,7 +5,12 @@ import {
   WATERMARK_MOTIONS,
   watermarkPathKeyframes,
 } from "../src/recipes/watermarkMotion.js";
-import { CONSOLE_HTML } from "../src/server/page.js";
+import { readFileSync } from "node:fs";
+
+const CONSOLE_JS = readFileSync(
+  new URL("../src/server/console.js", import.meta.url),
+  "utf8",
+);
 
 /**
  * The console carries its own copy of this maths so it can draw the path and
@@ -13,12 +18,12 @@ import { CONSOLE_HTML } from "../src/server/page.js";
  * they agree, so the page's copy is lifted out and run against this one.
  */
 function consoleImplementation(): typeof watermarkPathKeyframes {
-  const start = CONSOLE_HTML.indexOf("const EDGE_MARGIN");
-  const end = CONSOLE_HTML.indexOf("function fullDurationSeconds");
+  const start = CONSOLE_JS.indexOf("const EDGE_MARGIN");
+  const end = CONSOLE_JS.indexOf("function fullDurationSeconds");
   if (start < 0 || end <= start) {
     throw new Error("The console no longer contains the watermark path maths");
   }
-  const source = CONSOLE_HTML.slice(start, end);
+  const source = CONSOLE_JS.slice(start, end);
   return new Function(
     `${source}\nreturn watermarkPathKeyframes;`,
   )() as typeof watermarkPathKeyframes;

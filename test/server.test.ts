@@ -25,8 +25,8 @@ import { watermarkPathKeyframes } from "../src/recipes/watermarkMotion.js";
 import { renderConsoleHtml } from "../src/server/page.js";
 import { readFileSync } from "node:fs";
 
-const CONSOLE_HTML_SOURCE = readFileSync(
-  new URL("../src/server/page.ts", import.meta.url),
+const CONSOLE_JS_SOURCE = readFileSync(
+  new URL("../src/server/console.js", import.meta.url),
   "utf8",
 );
 
@@ -45,7 +45,7 @@ afterEach(async () => {
 /** Reads the session token out of the served page, the way the console does. */
 async function tokenFor(url: string): Promise<string> {
   const html = await (await fetch(url)).text();
-  const match = /let TOKEN = "([^"]+)"/.exec(html);
+  const match = /data-session-token="([^"]+)"/.exec(html);
   if (match === null) throw new Error("No session token in the served page");
   return match[1] as string;
 }
@@ -76,7 +76,7 @@ describe("conductor ui server", () => {
     expect(url.startsWith("http://127.0.0.1:")).toBe(true);
   });
 
-  it("serves a self-contained console with no external references", async () => {
+  it("serves a self-contained console with same-origin external assets", async () => {
     const url = await serve();
     const response = await fetch(url);
     expect(response.status).toBe(200);
@@ -84,11 +84,11 @@ describe("conductor ui server", () => {
     const html = await response.text();
     expect(html).toContain("<title>Conductor</title>");
     expect(html).toContain("Build &amp; render");
-    expect(html).toContain("/api/render?token=");
     expect(html).toContain("Privacy Clean Copy");
-    expect(html).toContain("/api/privacy-clean");
-    expect(html).toContain("refreshAutoSuggestedOutputs");
-    expect(html).toContain('control.dataset.autoSuggested = "true"');
+    expect(html).toContain('href="/console.css"');
+    expect(html).toContain('src="/console.js"');
+    expect(html).not.toContain("<style>");
+    expect(html).not.toMatch(/<script>(?:[\s\S]*?)<\/script>/);
     // No CDN fonts, scripts, or styles: the page must work with no network.
     expect(html).not.toMatch(/src="https?:\/\//);
     expect(html).not.toMatch(/href="https?:\/\//);
@@ -98,13 +98,12 @@ describe("conductor ui server", () => {
     // The console is hand-written into one string with no build step, so
     // nothing else would catch a stray bracket until the page silently
     // rendered nothing. Compiling proves it parses; it is never called.
-    const html = await (await fetch(await serve())).text();
-    const script = html.slice(
-      html.lastIndexOf("<script>") + "<script>".length,
-      html.lastIndexOf("</script>"),
-    );
+    const url = await serve();
+    const script = await (await fetch(`${url}console.js`)).text();
     expect(script.length).toBeGreaterThan(1000);
     expect(() => new Function(script)).not.toThrow();
+    expect(script).toContain("/api/render?token=");
+    expect(script).toContain("/api/beat-sync/analyze");
   });
 
   it("emits a hosted copy that points only at the visitor's loopback server", () => {
@@ -114,22 +113,21 @@ describe("conductor ui server", () => {
     });
     expect(html).toContain('href="/director/"');
     expect(html).toContain('aria-current="page">Conductor</a>');
-    expect(html).toContain('const API_BASE = "http://127.0.0.1:4173/"');
-    expect(html).toContain('let TOKEN = ""');
+    expect(html).toContain('data-api-base="http://127.0.0.1:4173/"');
+    expect(html).toContain('data-session-token=""');
     expect(html).toContain("conductor serve --no-open");
-    expect(html).toContain("CONDUCTOR_PUBLIC_ORIGIN=");
-    expect(html).toContain('"CONDUCTOR_PUBLIC_ORIGIN=" + window.location.origin');
     expect(html).toContain('data-connection-state="not-started"');
     expect(html).toContain("Connect to local Conductor");
-    expect(html).toContain('showConnectionState("awaiting-permission")');
-    expect(html).toContain('showConnectionState("refused-unreachable")');
-    expect(html).toContain('["loopback-network", "local-network-access"]');
-    expect(html).toContain('permission.addEventListener("change", permissionChanged)');
-    expect(html).toContain("else void start(false)");
-    expect(html).toMatch(
+    expect(CONSOLE_JS_SOURCE).toContain("CONDUCTOR_PUBLIC_ORIGIN=");
+    expect(CONSOLE_JS_SOURCE).toContain('showConnectionState("awaiting-permission")');
+    expect(CONSOLE_JS_SOURCE).toContain('showConnectionState("refused-unreachable")');
+    expect(CONSOLE_JS_SOURCE).toContain('["loopback-network", "local-network-access"]');
+    expect(CONSOLE_JS_SOURCE).toContain('permission.addEventListener("change", permissionChanged)');
+    expect(CONSOLE_JS_SOURCE).toContain("else void start(false)");
+    expect(CONSOLE_JS_SOURCE).toMatch(
       /const baseUrl = preview && preview\.imageUrl\s*\? apiUrl\(preview\.imageUrl\)/,
     );
-    expect(html).not.toContain("CONNECT_TIMEOUT_MS");
+    expect(CONSOLE_JS_SOURCE).not.toContain("CONNECT_TIMEOUT_MS");
     expect(html).not.toContain("__CONDUCTOR_API_BASE__");
   });
 
@@ -140,21 +138,19 @@ describe("conductor ui server", () => {
       apiBase: "http://127.0.0.1:4173/",
     });
 
-    expect(local).toContain('const HOSTED_CONSOLE = TOKEN === ""');
-    expect(local).toContain('else void start(false)');
-    expect(hosted).toContain('$("retryConnection").onclick = () => { void start(true); }');
-    expect(hosted).toContain('if (HOSTED_CONSOLE) showConnectionState("not-started")');
+    expect(local).toContain('data-session-token="local-token"');
+    expect(hosted).toContain('data-session-token=""');
+    expect(CONSOLE_JS_SOURCE).toContain('const HOSTED_CONSOLE = TOKEN === ""');
+    expect(CONSOLE_JS_SOURCE).toContain('else void start(false)');
+    expect(CONSOLE_JS_SOURCE).toContain('$("retryConnection").onclick = () => { void start(true); }');
+    expect(CONSOLE_JS_SOURCE).toContain('if (HOSTED_CONSOLE) showConnectionState("not-started")');
   });
 
-  it("keeps the console template free of characters that TypeScript would eat", () => {
-    // The page is one String.raw template, so a backtick or a dollar-brace in
-    // the page's own JavaScript is read by TypeScript instead of the browser.
-    // That has broken this file twice; a comment is not a guard, this is.
-    const marker = "String.raw" + "`";
-    const start = CONSOLE_HTML_SOURCE.indexOf(marker) + marker.length;
-    const body = CONSOLE_HTML_SOURCE.slice(start, CONSOLE_HTML_SOURCE.lastIndexOf("`;"));
-    expect(body).not.toContain("`");
-    expect(body).not.toContain("${");
+  it("keeps executable code and styles out of the HTML document", () => {
+    const html = renderConsoleHtml({ sessionToken: "token", apiBase: "" });
+    expect(html).not.toContain("<style>");
+    expect(html).not.toMatch(/<script>(?:[\s\S]*?)<\/script>/);
+    expect(html).not.toMatch(/\sstyle\s*=/);
   });
 
   it("refuses to be framed and disables MIME sniffing", async () => {
@@ -250,6 +246,7 @@ describe("conductor ui server", () => {
     expect(ids).toContain("motivated-transition");
     expect(ids).toContain("hdr-safe-grade");
     expect(ids).toContain("cinematic-look-lab");
+    expect(ids).toContain("beat-sync-edit");
     const titleCard = body.recipes.find((recipe) => recipe.id === "title-card");
     expect(Object.keys(titleCard?.params ?? {})).toContain("outputPath");
   });
@@ -398,6 +395,13 @@ describe("conductor ui server", () => {
     });
     expect(cinematic?.params.watermarkText?.default).toBe("yourbrand_");
     expect(cinematic?.params.watermarkVisibility?.default).toBe(10);
+    const beatSync = body.recipes.find((recipe) => recipe.id === "beat-sync-edit");
+    expect(beatSync?.params.audio?.path).toBe("open-file");
+    expect(beatSync?.params.media).toMatchObject({
+      type: "files",
+      path: "open-file",
+    });
+    expect(beatSync?.params.brandPulse?.default).toBe(false);
   });
 
   it("converts an After Effects HLG still into something a browser shows honestly", () => {
@@ -743,5 +747,8 @@ describe("the console cannot be driven by another site", () => {
     expect(csp).toContain("default-src 'none'");
     expect(csp).toContain("frame-ancestors 'none'");
     expect(csp).toContain("connect-src 'self'");
+    expect(csp).toContain("style-src 'self'");
+    expect(csp).toContain("script-src 'self'");
+    expect(csp).not.toContain("'unsafe-inline'");
   });
 });

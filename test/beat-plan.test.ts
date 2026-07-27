@@ -49,6 +49,33 @@ describe("beat-sync planning foundation", () => {
     ]);
   });
 
+  it("feeds density and allowed families through the existing hierarchy", () => {
+    const beats = [
+      { frame: 12, timeSeconds: 0.5, importance: "beat" as const },
+      { frame: 24, timeSeconds: 1, importance: "primary" as const },
+      { frame: 48, timeSeconds: 2, importance: "downbeat" as const },
+    ];
+    const restrained = buildBeatSyncEvents(beats, {
+      density: "restrained",
+      allowedEventFamilies: ["cuts", "light"],
+    });
+    expect(restrained.map((event) => event.targets)).toEqual([
+      [],
+      ["light-accent"],
+      ["cut", "light-accent"],
+    ]);
+
+    const active = buildBeatSyncEvents(beats, {
+      density: "active",
+      allowedEventFamilies: ["cuts", "camera"],
+    });
+    expect(active.map((event) => event.targets)).toEqual([
+      ["camera-impact"],
+      ["cut"],
+      ["cut"],
+    ]);
+  });
+
   it("rejects invalid detector output before it reaches After Effects", () => {
     expect(() =>
       buildQuantizedBeatMap({

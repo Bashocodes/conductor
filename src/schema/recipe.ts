@@ -23,6 +23,8 @@ const paramNameSchema = z
 
 const describedParamSchema = z.object({
   description: z.string().min(1),
+  /** Hidden deterministic runtime input; never offered to a person or brain. */
+  internal: z.boolean().optional(),
 });
 
 const stringParamSchema = describedParamSchema
@@ -99,6 +101,27 @@ const stringParamSchema = describedParamSchema
         code: "custom",
         path: ["default"],
         message: "default is longer than maxLength",
+      });
+    }
+  });
+
+const filesParamSchema = describedParamSchema
+  .extend({
+    type: z.literal("files"),
+    default: z.array(z.string().min(1)).optional(),
+    minItems: z.number().int().positive().default(1),
+    path: z.literal("open-file").default("open-file"),
+  })
+  .strict()
+  .superRefine((definition, context) => {
+    if (
+      definition.default !== undefined &&
+      definition.default.length < definition.minItems
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["default"],
+        message: "default has fewer entries than minItems",
       });
     }
   });
@@ -205,6 +228,7 @@ const jsonParamSchema = describedParamSchema
 
 export const paramDefinitionSchema = z.discriminatedUnion("type", [
   stringParamSchema,
+  filesParamSchema,
   numberParamSchema,
   booleanParamSchema,
   enumParamSchema,
@@ -339,6 +363,9 @@ export function buildParamsSchema(
         schema = stringSchema;
         break;
       }
+      case "files":
+        schema = z.array(z.string().min(1)).min(definition.minItems);
+        break;
       case "number": {
         let numberSchema = z.number().finite();
         if (definition.integer === true) {

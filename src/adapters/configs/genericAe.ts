@@ -25,6 +25,13 @@ export const genericAeAdapterConfig = adapterConfigSchema.parse({
         },
       },
     },
+    addMarkers: {
+      tool: "ae_add_markers",
+      argsTemplate: {
+        target_id: "${args.targetId}",
+        markers: "${args.markers}",
+      },
+    },
     addTextLayer: {
       tool: "ae_add_text_layer",
       argsTemplate: {
@@ -51,7 +58,12 @@ export const genericAeAdapterConfig = adapterConfigSchema.parse({
         composition_id: "${args.compId}",
         layer: {
           path: "${args.path}",
+          kind: "${args.kind}",
           name: "${args.name}",
+          segments: "${args.segments}",
+          timeline_in_seconds: "${args.timelineInSeconds}",
+          timeline_out_seconds: "${args.timelineOutSeconds}",
+          source_in_seconds: "${args.sourceInSeconds}",
           width_percent: "${args.widthPercent}",
           position_preset: "${args.positionPreset}",
           custom_x_percent: "${args.customXPercent}",

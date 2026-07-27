@@ -14,7 +14,11 @@ export function summarizeRecipes(recipes: Recipe[]): RecipeSummary[] {
     id: recipe.id,
     title: recipe.title,
     description: recipe.description,
-    paramsSchema: z.toJSONSchema(buildParamsSchema(recipe.params), {
+    paramsSchema: z.toJSONSchema(buildParamsSchema(Object.fromEntries(
+      Object.entries(recipe.params).filter(
+        ([_name, definition]) => definition.internal !== true,
+      ),
+    )), {
       target: "draft-07",
     }) as JsonValue,
   }));

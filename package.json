@@ -47,7 +47,7 @@
   },
   "packageManager": "pnpm@11.9.0",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-console-assets.mjs",
     "build:console": "pnpm build && node scripts/emit-static-console.mjs",
     "test": "vitest run",
     "test:watch": "vitest",

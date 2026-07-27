@@ -45,6 +45,10 @@ export interface RunJournal {
   params: Record<string, unknown>;
   proposalProvenance?: ProposalProvenance;
   steps: JournalStep[];
+  verification?: {
+    beatSyncAlignment?: unknown;
+    [name: string]: unknown;
+  };
   error?: JournalError;
 }
 

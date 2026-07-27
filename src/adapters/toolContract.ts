@@ -4,6 +4,7 @@ import { jsonValueSchema } from "../schema/json.js";
 
 export const toolOperationSchema = z.enum([
   "createComp",
+  "addMarkers",
   "addTextLayer",
   "addMediaLayer",
   "setKeyframes",
@@ -50,6 +51,22 @@ const createCompArgsSchema = z
   })
   .strict();
 
+const addMarkersArgsSchema = z
+  .object({
+    targetId: z.string().min(1),
+    markers: z
+      .array(
+        z
+          .object({
+            timeSeconds: z.number().finite().nonnegative(),
+            comment: z.string().min(1),
+          })
+          .strict(),
+      )
+      .min(1),
+  })
+  .strict();
+
 const addTextLayerArgsSchema = z
   .object({
     compId: z.string().min(1),
@@ -71,25 +88,63 @@ const addTextLayerArgsSchema = z
   })
   .strict();
 
-const addMediaLayerArgsSchema = z
+const mediaPositionSchema = {
+  widthPercent: z.number().positive().max(100),
+  positionPreset: z.enum([
+    "Top Right",
+    "Top Left",
+    "Bottom Right",
+    "Bottom Left",
+    "Custom",
+  ]),
+  customXPercent: z.number().min(0).max(100),
+  customYPercent: z.number().min(0).max(100),
+  opacity: z.number().min(0).max(100),
+  motionBlur: z.boolean(),
+} as const;
+
+const singleMediaLayerArgsSchema = z
   .object({
     compId: z.string().min(1),
     path: z.string().min(1),
     name: z.string().min(1),
-    widthPercent: z.number().positive().max(100),
-    positionPreset: z.enum([
-      "Top Right",
-      "Top Left",
-      "Bottom Right",
-      "Bottom Left",
-      "Custom",
-    ]),
-    customXPercent: z.number().min(0).max(100),
-    customYPercent: z.number().min(0).max(100),
-    opacity: z.number().min(0).max(100),
-    motionBlur: z.boolean(),
+    kind: z.enum(["visual", "audio"]).default("visual"),
+    timelineInSeconds: z.number().nonnegative().default(0),
+    timelineOutSeconds: z.number().positive().optional(),
+    sourceInSeconds: z.number().nonnegative().default(0),
+    ...mediaPositionSchema,
   })
   .strict();
+
+const mediaSegmentSchema = z
+  .object({
+    path: z.string().min(1),
+    name: z.string().min(1),
+    timelineInSeconds: z.number().nonnegative(),
+    timelineOutSeconds: z.number().positive(),
+    sourceInSeconds: z.number().nonnegative().default(0),
+    cutFrame: z.number().int().nonnegative().optional(),
+    intendedOnsetSeconds: z.number().nonnegative().optional(),
+  })
+  .strict()
+  .refine(
+    (segment) => segment.timelineOutSeconds > segment.timelineInSeconds,
+    { message: "timelineOutSeconds must be after timelineInSeconds" },
+  );
+
+const batchMediaLayerArgsSchema = z
+  .object({
+    compId: z.string().min(1),
+    name: z.string().min(1),
+    segments: z.array(mediaSegmentSchema).min(1),
+    ...mediaPositionSchema,
+  })
+  .strict();
+
+const addMediaLayerArgsSchema = z.union([
+  singleMediaLayerArgsSchema,
+  batchMediaLayerArgsSchema,
+]);
 
 const setKeyframesArgsSchema = z
   .object({
@@ -188,6 +243,7 @@ const projectInfoArgsSchema = z
 
 export const toolArgsSchemas = {
   createComp: createCompArgsSchema,
+  addMarkers: addMarkersArgsSchema,
   addTextLayer: addTextLayerArgsSchema,
   addMediaLayer: addMediaLayerArgsSchema,
   setKeyframes: setKeyframesArgsSchema,
@@ -203,13 +259,32 @@ export interface ToolContract {
     args: z.infer<typeof createCompArgsSchema>;
     result: { compId: string };
   };
+  addMarkers: {
+    args: z.infer<typeof addMarkersArgsSchema>;
+    result: {
+      applied: boolean;
+      targetId: string;
+      markerCount: number;
+      markers: Array<{ timeSeconds: number; comment: string }>;
+    };
+  };
   addTextLayer: {
     args: z.infer<typeof addTextLayerArgsSchema>;
     result: { layerId: string };
   };
   addMediaLayer: {
     args: z.infer<typeof addMediaLayerArgsSchema>;
-    result: { layerId: string };
+    result: {
+      layerId: string;
+      placements?: Array<{
+        layerId: string;
+        path: string;
+        actualTimeSeconds: number;
+        actualFrame: number;
+        cutFrame?: number;
+        intendedOnsetSeconds?: number;
+      }>;
+    };
   };
   setKeyframes: {
     args: z.infer<typeof setKeyframesArgsSchema>;
