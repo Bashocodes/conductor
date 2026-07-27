@@ -100,6 +100,33 @@ detector against those marks when the sibling audio fixture exists and skips
 cleanly elsewhere. A 10 ms numeric step in the JSON is not a 10 ms precision
 claim.
 
+## A matching tolerance must exceed its ground truth
+
+The real-music fixture originally matched detections to annotations within
+50 ms, while declaring its own annotation resolution as ±50 ms. Those two
+numbers cannot both be right: annotation noise alone then counts as detector
+error. Measured that way the detector scored 10/22 recall and an F1 of 0.33,
+which reads as an architecture that needs replacing.
+
+It did not. The same detector against the same annotations, matched at 100 ms —
+a tolerance that actually exceeds the ground truth's resolution — scores 18/22,
+and 20/22 at 120 ms. Most apparent misses were detections sitting 57–114 ms
+away, not absent ones.
+
+A multi-band spectral flux with adaptive whitening was built and measured
+against this fixture before that error was found. At a valid tolerance it is
+not an improvement worth having: marginally better precision (fewer, tidier
+detections) bought by manufacturing 13–16 onsets in sustained material that
+contains none — a property the current detector holds at zero. It was not
+merged. The lesson is not that multi-band is wrong; it is that it was being
+chased to fix a problem the measurement had invented.
+
+The detector also runs a median +29.5 ms behind the marks. That is roughly one
+analysis hop, but it is also well inside the ±50 ms annotation resolution and
+in the direction a human marking spectrogram smear tends to err. It cannot be
+attributed to the detector without finer ground truth, and must not be
+"corrected" until it can.
+
 ## Planned Conductor controls
 
 - Music file

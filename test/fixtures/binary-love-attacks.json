@@ -7,7 +7,7 @@
   },
   "annotationGranularityMilliseconds": 50,
   "timeStepMilliseconds": 10,
-  "matchingToleranceMilliseconds": 50,
+  "matchingToleranceMilliseconds": 100,
   "method": "Manual visual marking from full-band, below-160-Hz, and above-2-kHz spectrogram/waveform views. Marks were rounded to the nearest 10 ms before any detector output for this window was inspected. The spectrogram used a 1024-sample window at 22050 Hz (about 46 ms), so the honest attack-time resolution is plus or minus 50 ms; the 10 ms numeric step is not a 10 ms accuracy claim.",
   "voiceLabels": {
     "kick_or_low_drum": "Abrupt low-band bloom with a clear attack edge; believed to be kick or another low drum.",
@@ -15,27 +15,94 @@
     "hat_or_bright_attack": "Brief upper-band attack with little low-frequency bloom; believed to be hat, shaker, or similar bright percussion."
   },
   "attacks": [
-    { "timeSeconds": 4.8, "voice": "kick_or_low_drum" },
-    { "timeSeconds": 5.17, "voice": "snare_or_clap" },
-    { "timeSeconds": 5.58, "voice": "kick_or_low_drum" },
-    { "timeSeconds": 6.11, "voice": "kick_or_low_drum" },
-    { "timeSeconds": 6.41, "voice": "hat_or_bright_attack" },
-    { "timeSeconds": 7.0, "voice": "kick_or_low_drum" },
-    { "timeSeconds": 7.25, "voice": "snare_or_clap" },
-    { "timeSeconds": 7.8, "voice": "kick_or_low_drum" },
-    { "timeSeconds": 8.0, "voice": "snare_or_clap" },
-    { "timeSeconds": 8.19, "voice": "hat_or_bright_attack" },
-    { "timeSeconds": 8.66, "voice": "kick_or_low_drum" },
-    { "timeSeconds": 9.0, "voice": "snare_or_clap" },
-    { "timeSeconds": 9.33, "voice": "kick_or_low_drum" },
-    { "timeSeconds": 9.67, "voice": "hat_or_bright_attack" },
-    { "timeSeconds": 10.0, "voice": "kick_or_low_drum" },
-    { "timeSeconds": 10.33, "voice": "snare_or_clap" },
-    { "timeSeconds": 10.67, "voice": "hat_or_bright_attack" },
-    { "timeSeconds": 11.0, "voice": "kick_or_low_drum" },
-    { "timeSeconds": 11.33, "voice": "snare_or_clap" },
-    { "timeSeconds": 11.5, "voice": "hat_or_bright_attack" },
-    { "timeSeconds": 11.67, "voice": "kick_or_low_drum" },
-    { "timeSeconds": 11.83, "voice": "snare_or_clap" }
-  ]
+    {
+      "timeSeconds": 4.8,
+      "voice": "kick_or_low_drum"
+    },
+    {
+      "timeSeconds": 5.17,
+      "voice": "snare_or_clap"
+    },
+    {
+      "timeSeconds": 5.58,
+      "voice": "kick_or_low_drum"
+    },
+    {
+      "timeSeconds": 6.11,
+      "voice": "kick_or_low_drum"
+    },
+    {
+      "timeSeconds": 6.41,
+      "voice": "hat_or_bright_attack"
+    },
+    {
+      "timeSeconds": 7.0,
+      "voice": "kick_or_low_drum"
+    },
+    {
+      "timeSeconds": 7.25,
+      "voice": "snare_or_clap"
+    },
+    {
+      "timeSeconds": 7.8,
+      "voice": "kick_or_low_drum"
+    },
+    {
+      "timeSeconds": 8.0,
+      "voice": "snare_or_clap"
+    },
+    {
+      "timeSeconds": 8.19,
+      "voice": "hat_or_bright_attack"
+    },
+    {
+      "timeSeconds": 8.66,
+      "voice": "kick_or_low_drum"
+    },
+    {
+      "timeSeconds": 9.0,
+      "voice": "snare_or_clap"
+    },
+    {
+      "timeSeconds": 9.33,
+      "voice": "kick_or_low_drum"
+    },
+    {
+      "timeSeconds": 9.67,
+      "voice": "hat_or_bright_attack"
+    },
+    {
+      "timeSeconds": 10.0,
+      "voice": "kick_or_low_drum"
+    },
+    {
+      "timeSeconds": 10.33,
+      "voice": "snare_or_clap"
+    },
+    {
+      "timeSeconds": 10.67,
+      "voice": "hat_or_bright_attack"
+    },
+    {
+      "timeSeconds": 11.0,
+      "voice": "kick_or_low_drum"
+    },
+    {
+      "timeSeconds": 11.33,
+      "voice": "snare_or_clap"
+    },
+    {
+      "timeSeconds": 11.5,
+      "voice": "hat_or_bright_attack"
+    },
+    {
+      "timeSeconds": 11.67,
+      "voice": "kick_or_low_drum"
+    },
+    {
+      "timeSeconds": 11.83,
+      "voice": "snare_or_clap"
+    }
+  ],
+  "matchingToleranceRationale": "Deliberately larger than annotationGranularityMilliseconds. Ground truth here is accurate to about +/-50 ms, and the detector has its own error, so matching at 50 ms counts annotation noise as detector misses. It did: at a 50 ms tolerance this fixture reported 10/22 recall and an F1 of 0.33, which was read as an architecturally broken detector. At 100 ms the same detector and the same annotations give 18/22. A matching tolerance must exceed the resolution of the ground truth it matches against."
 }
