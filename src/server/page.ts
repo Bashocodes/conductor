@@ -1414,7 +1414,9 @@ function renderStage() {
   setStylesheetRule(".stage-frame", { "aspect-ratio": width + " / " + height });
 
   const preview = cinematicPreviews[selectedLook];
-  const baseUrl = (preview && preview.imageUrl) || sourceFrameUrl;
+  const baseUrl = preview && preview.imageUrl
+    ? apiUrl(preview.imageUrl)
+    : sourceFrameUrl;
   frame.innerHTML = "";
 
   if (baseUrl) {

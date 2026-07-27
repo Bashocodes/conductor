@@ -126,6 +126,9 @@ describe("conductor ui server", () => {
     expect(html).toContain('["loopback-network", "local-network-access"]');
     expect(html).toContain('permission.addEventListener("change", permissionChanged)');
     expect(html).toContain("else void start(false)");
+    expect(html).toMatch(
+      /const baseUrl = preview && preview\.imageUrl\s*\? apiUrl\(preview\.imageUrl\)/,
+    );
     expect(html).not.toContain("CONNECT_TIMEOUT_MS");
     expect(html).not.toContain("__CONDUCTOR_API_BASE__");
   });
