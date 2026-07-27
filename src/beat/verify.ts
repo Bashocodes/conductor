@@ -222,7 +222,7 @@ export function detectVisualCutsFromDifferences(
   const adaptiveOffset = Math.max(
     Number.EPSILON,
     baselineMad * 8,
-    interquartileRange * 4,
+    interquartileRange * 2,
     baselineMedian * 3,
   );
   const adaptiveThreshold = baselineMedian + adaptiveOffset;

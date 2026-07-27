@@ -352,24 +352,41 @@ function classifyPeaks(
   peaks: Peak[],
   hopSize: number,
   sampleRate: number,
+  pcm: ArrayLike<number>,
 ): DetectedOnset[] {
-  return peaks.map((peak, index) => ({
-    // Frame zero is centred at sample zero. A three-point parabolic fit around
-    // the envelope maximum recovers the fractional peak position while keeping
-    // timing derived from sample indices rather than accumulated durations.
-    timeSeconds: (peak.refinedFrame * hopSize) / sampleRate,
-    envelopeFrame: peak.frame,
-    strength: peak.strength,
-    // With no score or meter metadata, assigning the first accepted pulse as
-    // phase zero is an explicit structural estimate. It creates a stable
-    // four-beat edit hierarchy without pretending to infer musical semantics.
-    importance:
-      index % 4 === 0
-        ? "downbeat"
-        : index % 2 === 0
-          ? "primary"
-          : "beat",
-  }));
+  return peaks.map((peak, index) => {
+    // The parabolic envelope position gives a stable sub-hop neighbourhood.
+    // Within it, the strongest sample-to-sample change identifies the transient
+    // edge rather than the centre of the 23 ms analysis window.
+    const approximateSample = peak.refinedFrame * hopSize;
+    const start = Math.max(1, Math.floor(approximateSample - hopSize));
+    const end = Math.min(pcm.length - 1, Math.ceil(approximateSample + hopSize));
+    let transientSample = approximateSample;
+    let transientStrength = -Infinity;
+    for (let sample = start; sample <= end; sample += 1) {
+      const strength = Math.abs(
+        (pcm[sample] as number) - (pcm[sample - 1] as number),
+      );
+      if (strength > transientStrength) {
+        transientStrength = strength;
+        transientSample = sample;
+      }
+    }
+    return {
+      timeSeconds: transientSample / sampleRate,
+      envelopeFrame: peak.frame,
+      strength: peak.strength,
+      // With no score or meter metadata, assigning the first accepted pulse as
+      // phase zero is an explicit structural estimate. It creates a stable
+      // four-beat edit hierarchy without pretending to infer musical semantics.
+      importance:
+        index % 4 === 0
+          ? "downbeat"
+          : index % 2 === 0
+            ? "primary"
+            : "beat",
+    };
+  });
 }
 
 export function analyzePcm(
@@ -405,7 +422,7 @@ export function analyzePcm(
     options.medianRadiusFrames ?? 16,
     minimumGapFrames,
   );
-  const onsets = classifyPeaks(peaks, hopSize, sampleRate);
+  const onsets = classifyPeaks(peaks, hopSize, sampleRate, pcm);
   const beatTimesSeconds = onsets.map((onset) => onset.timeSeconds);
   return {
     sampleRate,
