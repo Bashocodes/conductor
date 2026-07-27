@@ -247,7 +247,23 @@ function onsetEnvelope(
 
 interface Peak {
   frame: number;
+  refinedFrame: number;
   strength: number;
+}
+
+function parabolicPeakOffset(
+  previous: number,
+  peak: number,
+  next: number,
+): number {
+  const denominator = previous - 2 * peak + next;
+  if (!Number.isFinite(denominator) || Math.abs(denominator) <= Number.EPSILON) {
+    return 0;
+  }
+  return Math.max(
+    -0.5,
+    Math.min(0.5, 0.5 * (previous - next) / denominator),
+  );
 }
 
 function adaptivePeaks(
@@ -278,7 +294,16 @@ function adaptivePeaks(
       localMedian * 0.35,
     );
     if (value > localMedian + adaptiveOffset) {
-      candidates.push({ frame, strength: value });
+      candidates.push({
+        frame,
+        refinedFrame:
+          frame + parabolicPeakOffset(
+            envelope[frame - 1] as number,
+            value,
+            envelope[frame + 1] as number,
+          ),
+        strength: value,
+      });
     }
   }
 
@@ -329,9 +354,10 @@ function classifyPeaks(
   sampleRate: number,
 ): DetectedOnset[] {
   return peaks.map((peak, index) => ({
-    // Frame zero is centred at sample zero; the frame index therefore names
-    // the onset sample directly instead of accumulating hop durations.
-    timeSeconds: (peak.frame * hopSize) / sampleRate,
+    // Frame zero is centred at sample zero. A three-point parabolic fit around
+    // the envelope maximum recovers the fractional peak position while keeping
+    // timing derived from sample indices rather than accumulated durations.
+    timeSeconds: (peak.refinedFrame * hopSize) / sampleRate,
     envelopeFrame: peak.frame,
     strength: peak.strength,
     // With no score or meter metadata, assigning the first accepted pulse as

@@ -1698,20 +1698,21 @@ function renderSteps(steps) {
   return list;
 }
 
-function appendAlignmentEvidence(parent, report) {
+function appendFramePlacementEvidence(parent, report) {
   const evidence = el(
     "div",
     "alignment-evidence " + (report.status === "verified" ? "verified" : "failed"),
   );
   if (report.status === "not-applicable") {
-    evidence.appendChild(el("b", null, "Cut alignment not applicable."));
+    evidence.appendChild(el("b", null, "Frame placement · not applicable."));
     evidence.appendChild(document.createTextNode(
-      " No cut events were enabled, so Conductor makes no cut-alignment claim."));
+      " No cut events were enabled."));
   } else {
     evidence.appendChild(el(
       "b",
       null,
-      String(report.cutsWithinHalfFrame) + " of " + String(report.cutCount)
+      "Frame placement · " + String(report.cutsWithinHalfFrame)
+        + " of " + String(report.cutCount)
         + " cuts within " + (Number(report.frameDurationSeconds) * 500).toFixed(2)
         + " ms.",
     ));
@@ -1721,6 +1722,46 @@ function appendAlignmentEvidence(parent, report) {
         + " ms · delivered " + Number(report.renderedFrameRate).toFixed(3) + " fps."));
   }
   parent.appendChild(evidence);
+}
+
+function appendEndToEndAlignmentEvidence(parent, report) {
+  const evidence = el(
+    "div",
+    "alignment-evidence " + (report.status === "verified" ? "verified" : "failed"),
+  );
+  if (report.status === "not-applicable") {
+    evidence.appendChild(el("b", null, "End-to-end alignment · not applicable."));
+    evidence.appendChild(document.createTextNode(
+      " No authored visual cuts were enabled."));
+  } else {
+    evidence.appendChild(el(
+      "b",
+      null,
+      "End-to-end alignment · " + String(report.cutsWithinHalfFrame)
+        + " of " + String(report.detectedVisualCutCount)
+        + " independently detected cuts within "
+        + (Number(report.frameDurationSeconds) * 500).toFixed(2) + " ms.",
+    ));
+    evidence.appendChild(document.createTextNode(
+      " Video detector " + String(report.detectedVisualCutCount)
+        + "/" + String(report.expectedVisualCutCount)
+        + " expected cuts · audio detector " + String(report.detectedAudioOnsetCount)
+        + " onsets · max "
+        + (report.maxDeviationSeconds === null
+          ? "unmeasurable"
+          : (Number(report.maxDeviationSeconds) * 1000).toFixed(3) + " ms")
+        + " · mean "
+        + (report.meanDeviationSeconds === null
+          ? "unmeasurable"
+          : (Number(report.meanDeviationSeconds) * 1000).toFixed(3) + " ms")
+        + "."));
+  }
+  parent.appendChild(evidence);
+}
+
+function appendBeatSyncVerification(parent, verification) {
+  appendFramePlacementEvidence(parent, verification.framePlacement);
+  appendEndToEndAlignmentEvidence(parent, verification.endToEndAlignment);
 }
 
 /**
@@ -1755,7 +1796,7 @@ function startRender(queued) {
       + "&indices=" + encodeURIComponent(indices.join(",")),
   ));
   let settled = false;
-  let alignment = null;
+  let beatSyncVerification = null;
 
   source.addEventListener("start", (event) => {
     const payload = JSON.parse(event.data);
@@ -1778,14 +1819,18 @@ function startRender(queued) {
     log.textContent = (log.textContent + payload.text + "\n").slice(-20_000);
     log.scrollTop = log.scrollHeight;
   });
-  source.addEventListener("alignment", (event) => {
-    alignment = JSON.parse(event.data);
+  source.addEventListener("beat-sync-verification", (event) => {
+    beatSyncVerification = JSON.parse(event.data);
+    const placement = beatSyncVerification.framePlacement;
+    const endToEnd = beatSyncVerification.endToEndAlignment;
+    const failed =
+      placement.status === "failed" || endToEnd.status === "failed";
     status.textContent =
-      alignment.status === "verified"
-        ? "Render complete; cut alignment verified."
-        : alignment.status === "not-applicable"
-          ? "Render complete; no cut events to measure."
-          : "Render complete; alignment verification failed.";
+      failed
+        ? "Render complete; Beat Sync verification failed."
+        : endToEnd.status === "not-applicable"
+          ? "Render complete; no authored visual cuts to compare."
+          : "Render complete; frame placement and end-to-end alignment verified.";
   });
   source.addEventListener("done", (event) => {
     settled = true;
@@ -1800,11 +1845,11 @@ function startRender(queued) {
         hlg
           ? " The delivery is HEVC Main 10 with BT.2020 and HLG metadata."
           : " Your file" + (queued.length === 1 ? " is" : "s are") + " ready."));
-      const reports = Array.isArray(payload.beatSyncAlignment)
-        ? payload.beatSyncAlignment
+      const reports = Array.isArray(payload.beatSyncVerification)
+        ? payload.beatSyncVerification
         : [];
-      const report = reports[reports.length - 1] || alignment;
-      if (report) appendAlignmentEvidence(panel, report);
+      const report = reports[reports.length - 1] || beatSyncVerification;
+      if (report) appendBeatSyncVerification(panel, report);
       for (const entry of queued) appendOutputRow(panel, entry, "Show in Finder");
       // The delivery becomes playable from the console itself.
       const deliveries = Array.isArray(payload.deliveries) ? payload.deliveries : [];
@@ -1820,7 +1865,9 @@ function startRender(queued) {
     } else {
       panel.appendChild(el("b", null, "Render failed."));
       panel.appendChild(document.createTextNode(" " + (payload.error || "")));
-      if (alignment) appendAlignmentEvidence(panel, alignment);
+      if (beatSyncVerification) {
+        appendBeatSyncVerification(panel, beatSyncVerification);
+      }
       if (payload.tail) {
         panel.appendChild(el("pre", "render-log", payload.tail));
       }

@@ -37,12 +37,11 @@ import {
   type BeatAnalysis,
 } from "../beat/analyze.js";
 import {
-  assertBeatSyncAlignment,
-  measureBeatSyncAlignment,
-  probeRenderedFrameRate,
-  recordBeatSyncAlignment,
-  type BeatSyncAlignmentReport,
+  assertBeatSyncVerification,
+  recordBeatSyncVerification,
   type BeatSyncCutPlacement,
+  type BeatSyncVerificationReport,
+  verifyRenderedBeatSync,
 } from "../beat/verify.js";
 
 /**
@@ -1513,7 +1512,7 @@ export async function startConductorServer(options: ServeOptions): Promise<{
 
     const delivered: string[] = [];
     const deliveredIds: Array<{ id: string; outputPath: string }> = [];
-    const beatSyncAlignment: BeatSyncAlignmentReport[] = [];
+    const beatSyncVerification: BeatSyncVerificationReport[] = [];
     for (let position = 0; position < requestedIndices.length; position += 1) {
       const renderQueueIndex = requestedIndices[position] as number;
       const queuedItem = queuedItems.find((item) => item.index === renderQueueIndex);
@@ -1587,35 +1586,50 @@ export async function startConductorServer(options: ServeOptions): Promise<{
         }
 
         if (pending.beatSync !== undefined) {
+          const ffmpeg = await findExecutable(FFMPEG_CANDIDATES);
+          if (ffmpeg === undefined) {
+            throw new Error(
+              "ffmpeg is required for independent beat-sync verification, but it was not found.",
+            );
+          }
           const ffprobe = await findExecutable(FFPROBE_CANDIDATES);
           if (ffprobe === undefined) {
             throw new Error(
-              "ffprobe is required for beat-sync alignment verification, but it was not found.",
+              "ffprobe is required for beat-sync verification, but it was not found.",
             );
           }
-          const renderedFrameRate = await probeRenderedFrameRate(
-            pending.outputPath,
-            ffprobe,
-          );
-          const alignment = measureBeatSyncAlignment(
-            pending.beatSync.cuts,
-            pending.beatSync.requestedFrameRate,
-            renderedFrameRate,
-          );
-          await recordBeatSyncAlignment(
+          const verification = await verifyRenderedBeatSync({
+            outputPath: pending.outputPath,
+            requestedFrameRate: pending.beatSync.requestedFrameRate,
+            cuts: pending.beatSync.cuts,
+            ffmpegPath: ffmpeg,
+            ffprobePath: ffprobe,
+          });
+          await recordBeatSyncVerification(
             pending.beatSync.journalPath,
-            alignment,
+            verification,
           );
-          beatSyncAlignment.push(alignment);
-          send("alignment", alignment);
+          beatSyncVerification.push(verification);
+          send("beat-sync-verification", verification);
+          const placement = verification.framePlacement;
+          const endToEnd = verification.endToEndAlignment;
           process.stdout.write(
-            alignment.status === "not-applicable"
-              ? "Beat Sync alignment: no cut events were enabled; no cut-alignment claim was made.\n"
-              : `Beat Sync alignment: ${alignment.cutsWithinHalfFrame} of ${alignment.cutCount} cuts within half a frame; `
-                + `max ${(alignment.maxDeviationSeconds * 1_000).toFixed(3)} ms, `
-                + `mean ${(alignment.meanDeviationSeconds * 1_000).toFixed(3)} ms.\n`,
+            placement.status === "not-applicable"
+              ? "Beat Sync frame placement: no cut events were enabled.\n"
+              : `Beat Sync frame placement: ${placement.cutsWithinHalfFrame} of ${placement.cutCount} cuts within half a frame; `
+                + `max ${(placement.maxDeviationSeconds * 1_000).toFixed(3)} ms, `
+                + `mean ${(placement.meanDeviationSeconds * 1_000).toFixed(3)} ms.\n`,
           );
-          assertBeatSyncAlignment(alignment);
+          process.stdout.write(
+            endToEnd.status === "not-applicable"
+              ? "Beat Sync end-to-end alignment: no authored visual cuts to compare.\n"
+              : `Beat Sync end-to-end alignment: independently detected ${endToEnd.detectedVisualCutCount} visual cuts and `
+                + `${endToEnd.detectedAudioOnsetCount} audio onsets; ${endToEnd.cutsWithinHalfFrame} cuts within half a frame, `
+                + `${endToEnd.cutsWithinOneFrame} within one frame; max `
+                + `${endToEnd.maxDeviationSeconds === null ? "unmeasurable" : `${(endToEnd.maxDeviationSeconds * 1_000).toFixed(3)} ms`}, `
+                + `mean ${endToEnd.meanDeviationSeconds === null ? "unmeasurable" : `${(endToEnd.meanDeviationSeconds * 1_000).toFixed(3)} ms`}.\n`,
+          );
+          assertBeatSyncVerification(verification);
         }
 
         delivered.push(pending.outputPath);
@@ -1652,9 +1666,9 @@ export async function startConductorServer(options: ServeOptions): Promise<{
       outputPaths: delivered,
       deliveries: deliveredIds,
       projectPath,
-      ...(beatSyncAlignment.length === 0
+      ...(beatSyncVerification.length === 0
         ? {}
-        : { beatSyncAlignment }),
+        : { beatSyncVerification }),
     });
     response.end();
   }

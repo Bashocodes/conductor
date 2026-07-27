@@ -46,7 +46,7 @@ export interface RunJournal {
   proposalProvenance?: ProposalProvenance;
   steps: JournalStep[];
   verification?: {
-    beatSyncAlignment?: unknown;
+    beatSync?: unknown;
     [name: string]: unknown;
   };
   error?: JournalError;

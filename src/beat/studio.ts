@@ -100,7 +100,10 @@ function enabledFamilies(
   params: BeatSyncStudioParams,
 ): BeatSyncEventFamily[] {
   const families: BeatSyncEventFamily[] = [];
-  if (params.cuts) families.push("cuts");
+  // Splitting one continuous source at a beat without changing source time
+  // creates an invisible layer boundary, not a visual cut. Only a media bin
+  // can author cut evidence that the rendered-video detector can observe.
+  if (params.cuts && params.media.length > 1) families.push("cuts");
   if (params.transitions) families.push("transitions");
   if (params.light) families.push("light");
   if (params.camera) families.push("camera");

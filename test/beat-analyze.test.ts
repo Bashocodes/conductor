@@ -35,12 +35,28 @@ function expectWithinOneHop(actual: number[], expected: number[]): void {
   }
 }
 
+function onsetErrors(actual: number[], expected: number[]): {
+  max: number;
+  mean: number;
+} {
+  const errors = actual.map((time, index) =>
+    Math.abs(time - (expected[index] as number))
+  );
+  return {
+    max: Math.max(...errors),
+    mean: errors.reduce((total, error) => total + error, 0) / errors.length,
+  };
+}
+
 describe("pure TypeScript beat analysis", () => {
-  it("detects a known 120 BPM click train within one STFT hop", () => {
+  it("refines a known 120 BPM click train to sub-hop precision", () => {
     const truth = Array.from({ length: 12 }, (_value, index) => 0.5 + index * 0.5);
     const analysis = analyzePcm(clickTrack(6.5, truth));
+    const errors = onsetErrors(analysis.beatTimesSeconds, truth);
 
     expectWithinOneHop(analysis.beatTimesSeconds, truth);
+    expect(errors.max).toBeLessThan(0.006);
+    expect(errors.mean).toBeLessThan(0.004);
     expect(analysis.estimatedBpm).toBeCloseTo(120, 0);
   });
 
@@ -53,8 +69,25 @@ describe("pure TypeScript beat analysis", () => {
     );
     const truth = [...first, ...second];
     const analysis = analyzePcm(clickTrack(9.5, truth));
+    const errors = onsetErrors(analysis.beatTimesSeconds, truth);
 
     expectWithinOneHop(analysis.beatTimesSeconds, truth);
+    expect(errors.max).toBeLessThan(0.006);
+    expect(errors.mean).toBeLessThan(0.004);
+  });
+
+  it("keeps sub-frame onset precision for a 60 fps delivery", () => {
+    const frameRate = 60;
+    const truth = Array.from(
+      { length: 10 },
+      (_value, index) => 0.375 + index * 0.375,
+    );
+    const analysis = analyzePcm(clickTrack(4.25, truth));
+    const errors = onsetErrors(analysis.beatTimesSeconds, truth);
+
+    expect(analysis.beatTimesSeconds).toHaveLength(truth.length);
+    expect(errors.max).toBeLessThan(1 / frameRate / 2);
+    expect(errors.mean).toBeLessThan(0.004);
   });
 
   it("does not manufacture peaks in a quiet passage", () => {

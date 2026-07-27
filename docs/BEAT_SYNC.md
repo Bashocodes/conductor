@@ -28,14 +28,23 @@ equally loud gimmick.
 5. When an After Effects marker-detection command is available and returns
    usable markers, it may be run as an optional corroborating pass. An empty or
    unavailable result does not replace or invalidate Conductor's analysis.
-6. After rendering, measure every actual cut against its intended onset, save
-   the alignment report in the run journal, and fail the run when any cut is
-   more than one frame away.
+6. After rendering, save two separate reports in the run journal:
+   - **Frame placement** checks the layer boundary AE reported against the
+     intended onset. It catches frame-rate or render-pipeline drift, but it is
+     not independent musical evidence.
+   - **End-to-end alignment** re-analyzes the rendered file's audio track,
+     detects visible scene changes from decoded rendered frames, and compares
+     those independently derived sets.
+7. Fail when frame placement drifts by more than one delivered frame, when the
+   visual detector does not recover the authored cut count, or when any
+   independently detected visual cut is more than one frame from a rendered
+   audio onset.
 
 Conductor must never claim an edit is beat-synced without a **VERIFIED**
 post-render alignment measurement. Detector names, marker creation, and a
 plausible-looking timeline are not evidence by themselves; the measured
-cut-to-onset deltas are.
+rendered-video-to-rendered-audio deltas are. Frame placement and end-to-end
+alignment must always be labeled and reported separately.
 
 ## Planned Conductor controls
 

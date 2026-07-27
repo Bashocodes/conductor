@@ -72,6 +72,17 @@ describe("Beat Sync Studio recipe", () => {
     ]);
   });
 
+  it("does not call an invisible boundary in one continuous video a cut", () => {
+    const plan = buildBeatSyncStudioPlan(
+      { ...publicParams, media: ["/media/continuous.mov"] },
+      analysis,
+    );
+
+    expect(plan.cutCount).toBe(0);
+    expect(plan.mediaSegments).toHaveLength(1);
+    expect(plan.markers).toHaveLength(analysis.onsets.length);
+  });
+
   it("executes as ordinary verified ToolContract data and ends in HLG delivery", async () => {
     const plan = buildBeatSyncStudioPlan(publicParams, analysis);
     const params = withBeatSyncPlanParams(publicParams, plan);
