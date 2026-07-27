@@ -7,10 +7,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { RecipeEngine } from "../src/engine/engine.js";
 import { JournalWriter, type RunJournal } from "../src/engine/journal.js";
 import {
+  cinematicLookLabRecipe,
   hdrSafeGradeRecipe,
   motivatedTransitionRecipe,
   titleCardRecipe,
 } from "../src/recipes/index.js";
+import { watermarkPathKeyframes } from "../src/recipes/watermarkMotion.js";
 import type { Recipe } from "../src/schema/recipe.js";
 import {
   createFakeAdapterRegistry,
@@ -147,6 +149,96 @@ const executionCases: ExecutionCase[] = [
     ],
   },
   {
+    // The Studio with a look, a logo and a moving watermark: the whole surface
+    // the console drives, including a path it generated rather than one the
+    // recipe hard-coded.
+    name: "hdr-cinema-studio golden hour branded",
+    recipe: cinematicLookLabRecipe,
+    params: {
+      clip: "/media/source.mov",
+      strength: "Natural HDR",
+      look: "Golden Hour",
+      renderMode: "Full",
+      logoEnabled: true,
+      watermarkEnabled: true,
+      watermarkPath: watermarkPathKeyframes({
+        motion: "Orbit",
+        cycles: 3,
+        travel: 70,
+        centerXPercent: 50,
+        centerYPercent: 50,
+      }),
+      outputPath: "/renders/golden-hour.mp4",
+    },
+    expectedTools: [
+      "fake_project_info",
+      "fake_project_info",
+      "fake_create_comp",
+      "fake_precompose",
+      "fake_apply_effect",
+      "fake_apply_effect",
+      "fake_apply_effect",
+      "fake_apply_effect",
+      "fake_apply_effect",
+      "fake_add_media_layer",
+      "fake_add_text_layer",
+      "fake_set_keyframes",
+      "fake_queue_render",
+    ],
+  },
+  {
+    // Technical HDR is what makes the separate grade recipe redundant: no look
+    // step matches it, and switching both brand layers off leaves exactly the
+    // colour-managed HLG delivery.
+    name: "hdr-cinema-studio technical hdr only",
+    recipe: cinematicLookLabRecipe,
+    params: {
+      clip: "/media/source.mov",
+      strength: "Vivid HDR",
+      look: "Technical HDR",
+      renderMode: "Preview",
+      logoEnabled: false,
+      watermarkEnabled: false,
+      outputPath: "/renders/technical.mp4",
+    },
+    expectedTools: [
+      "fake_project_info",
+      "fake_project_info",
+      "fake_create_comp",
+      "fake_precompose",
+      "fake_apply_effect",
+      "fake_apply_effect",
+      "fake_apply_effect",
+      "fake_queue_render",
+    ],
+  },
+  {
+    // A look sample: one frame, no render queue, and the scaffolding removed.
+    name: "hdr-cinema-studio still sample",
+    recipe: cinematicLookLabRecipe,
+    params: {
+      clip: "/media/source.mov",
+      strength: "Natural HDR",
+      look: "Film Noir",
+      renderMode: "Still",
+      logoEnabled: false,
+      watermarkEnabled: false,
+      outputPath: "/previews/film-noir.png",
+    },
+    expectedTools: [
+      "fake_project_info",
+      "fake_project_info",
+      "fake_create_comp",
+      "fake_precompose",
+      "fake_apply_effect",
+      "fake_apply_effect",
+      "fake_apply_effect",
+      "fake_apply_effect",
+      "fake_apply_effect",
+      "fake_save_frame",
+    ],
+  },
+  {
     name: "hdr-safe-grade natural",
     recipe: hdrSafeGradeRecipe,
     params: {
@@ -232,11 +324,18 @@ describe("reference recipe execution", () => {
       const calls = provider.connection.calls;
 
       expect(calls.map((call) => call.tool)).toEqual(testCase.expectedTools);
-      expect(calls.at(-1)?.tool).toBe("fake_queue_render");
+      // Every recipe ends by producing something: a queued render, or — for a
+      // look sample — a frame written straight out of the session.
+      const terminal = testCase.expectedTools.at(-1) as string;
+      expect(["fake_queue_render", "fake_save_frame"]).toContain(terminal);
+      expect(calls.at(-1)?.tool).toBe(terminal);
       expect(journal.status).toBe("completed");
-      expect(journal.steps.at(-1)).toMatchObject({
-        operation: "queueRender",
-        tool: "fake_queue_render",
+      // The last step that ran, not the last step in the recipe: a still run
+      // deliberately skips the render-queue step that follows it.
+      const executed = journal.steps.filter((step) => step.status === "succeeded");
+      expect(executed.at(-1)).toMatchObject({
+        operation: terminal === "fake_save_frame" ? "saveFrame" : "queueRender",
+        tool: terminal,
         status: "succeeded",
       });
       expect(testCase.recipe.steps.at(-1)?.verify).toBeDefined();
@@ -314,6 +413,81 @@ describe("reference recipe execution", () => {
         expect(vibrance?.args.settings).toMatchObject(controls.vibrance);
       }
     }
+  });
+
+  it("carries a console-generated watermark path through to the keyframe call", async () => {
+    const testCase = executionCases.find(
+      (candidate) => candidate.name === "hdr-cinema-studio golden hour branded",
+    );
+    if (testCase === undefined) throw new Error("Missing Studio execution case");
+    const { provider } = await runReferenceRecipe(testCase);
+
+    const keyframeCall = provider.connection.calls.find(
+      (call) => call.tool === "fake_set_keyframes",
+    );
+    const supplied = testCase.params.watermarkPath as Array<unknown>;
+    // A path with this many samples is the whole point: four corner keys are
+    // what made the mark lurch. It has to survive validation intact.
+    expect(supplied.length).toBeGreaterThan(60);
+    expect(keyframeCall?.args.keyframes).toEqual(supplied);
+    expect(keyframeCall?.args.coordinateSpace).toBe("normalized-comp");
+    expect(keyframeCall?.args.timeMode).toBe("normalized");
+
+    // Every keyframe Conductor writes is eased, and with a sampled curve the
+    // ease must stay tiny or the mark stalls at each of those samples.
+    const easing = keyframeCall?.args.easing as { controlPoints: number[] };
+    expect(easing.controlPoints[0]).toBeLessThanOrEqual(0.05);
+    expect(easing.controlPoints[2]).toBeGreaterThanOrEqual(0.95);
+
+    const textCall = provider.connection.calls.find(
+      (call) => call.tool === "fake_add_text_layer",
+    );
+    expect(textCall?.args.sizePercent).toBe(2.6);
+  });
+
+  it("delivers Technical HDR with no look effect and no brand layers", async () => {
+    const testCase = executionCases.find(
+      (candidate) => candidate.name === "hdr-cinema-studio technical hdr only",
+    );
+    if (testCase === undefined) throw new Error("Missing technical HDR case");
+    const { provider, journal } = await runReferenceRecipe(testCase);
+
+    const effects = provider.connection.calls
+      .filter((call) => call.tool === "fake_apply_effect")
+      .map((call) => call.args.effect);
+    // Exposure, Levels and Vibrance are the technical grade. Anything else
+    // would mean a look leaked into the baseline.
+    expect(effects).toEqual(["Exposure", "Levels", "Vibrance"]);
+    expect(
+      provider.connection.calls.some((call) => call.tool === "fake_add_text_layer"),
+    ).toBe(false);
+    expect(
+      provider.connection.calls.some((call) => call.tool === "fake_add_media_layer"),
+    ).toBe(false);
+    expect(journal.status).toBe("completed");
+  });
+
+  it("takes a look sample as one frame, and clears up after itself", async () => {
+    const testCase = executionCases.find(
+      (candidate) => candidate.name === "hdr-cinema-studio still sample",
+    );
+    if (testCase === undefined) throw new Error("Missing still execution case");
+    const { provider, journal } = await runReferenceRecipe(testCase);
+    const calls = provider.connection.calls;
+
+    // No render queue at all: that is the entire point of a still.
+    expect(calls.some((call) => call.tool === "fake_queue_render")).toBe(false);
+    const still = calls.find((call) => call.tool === "fake_save_frame");
+    expect(still?.args.outputPath).toBe("/previews/film-noir.png");
+    expect(still?.args.timeSeconds).toBe(0);
+    // A sample is scaffolding; leaving eight comps behind per comparison is not
+    // acceptable in someone else's project.
+    expect(still?.args.disposeComp).toBe(true);
+    expect(journal.status).toBe("completed");
+
+    // The sample is taken from the middle of the clip, like a moving one.
+    const comp = calls.find((call) => call.tool === "fake_create_comp");
+    expect(comp?.args.durationSeconds).toBe(2);
   });
 
   it("records the built-in HDR validation handoff in the journal", async () => {

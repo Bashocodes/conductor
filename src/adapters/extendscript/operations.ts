@@ -100,6 +100,12 @@ const JUSTIFICATION: Record<string, string> = {
 function renderAddTextLayer(args: ToolArgs<"addTextLayer">): string {
   const size = SIZE_PRESETS[args.sizePreset] ?? SIZE_PRESETS.medium;
   const justification = JUSTIFICATION[args.alignment] ?? JUSTIFICATION.center;
+  // Sized against the frame rather than in pixels, so the same request reads
+  // identically on a 1080 preview and a 4K master.
+  const fontSize =
+    args.sizePercent === undefined
+      ? String(size)
+      : `Math.max(1, Math.round(comp.height * ${args.sizePercent} / 100))`;
   return wrap(
     "add text layer",
     `  var comp = cdComp(${es3Literal(args.compId)});
@@ -108,10 +114,11 @@ function renderAddTextLayer(args: ToolArgs<"addTextLayer">): string {
   layer.name = ${es3Literal(args.name)};
   layer.motionBlur = ${args.motionBlur ? "true" : "false"};
 
+  var fontSize = ${fontSize};
   var textProp = layer.property("ADBE Text Properties").property("ADBE Text Document");
   var doc = textProp.value;
   doc.resetCharStyle();
-  doc.fontSize = ${size};
+  doc.fontSize = fontSize;
   doc.fillColor = cdParseColor(${es3Literal(args.color)});
   doc.applyFill = true;
   doc.applyStroke = false;
@@ -126,7 +133,7 @@ function renderAddTextLayer(args: ToolArgs<"addTextLayer">): string {
     args.position as unknown as JsonValue,
   )});
   layer.property("ADBE Transform Group").property("ADBE Opacity").setValue(${args.opacity});
-  return { layerId: String(layer.id), name: layer.name, index: layer.index, compId: String(comp.id), font: fontResult };`,
+  return { layerId: String(layer.id), name: layer.name, index: layer.index, compId: String(comp.id), font: fontResult, fontSize: fontSize };`,
   );
 }
 
@@ -378,6 +385,61 @@ function renderQueueRender(args: ToolArgs<"queueRender">): string {
   );
 }
 
+/**
+ * Writes one frame of a composition, straight out of the open session.
+ *
+ * `saveFrameToPng` returns before the file is closed on disk, so this reports
+ * where the frame was asked for rather than claiming it arrived — the caller
+ * waits for the file and verifies it.
+ *
+ * The frame lands in the project's working space, which for a Conductor grade
+ * is scene-referred Rec.2100 HLG. That is NOT what a browser can display, so
+ * whoever consumes this PNG has to convert it; the 16-bit depth is what makes
+ * that conversion survivable.
+ */
+function renderSaveFrame(args: ToolArgs<"saveFrame">): string {
+  return wrap(
+    "save frame",
+    `  var comp = cdComp(${es3Literal(args.compId)});
+  var file = new File(${es3Literal(args.outputPath)});
+  var folder = file.parent;
+  if (folder && !folder.exists) { folder.create(); }
+  comp.saveFrameToPng(${args.timeSeconds}, file);
+  // Read before any disposal: these are gone the moment the comp is.
+  var savedWidth = comp.width;
+  var savedHeight = comp.height;
+
+  var disposed = [];
+  ${
+    args.disposeComp
+      ? `// A sample is scaffolding. Remove the composition AND the
+  // precompositions only it used — comp.remove() alone orphans those, and
+  // eight orphans per comparison is how a project becomes unusable.
+  var sources = [];
+  for (var i = 1; i <= comp.numLayers; i++) {
+    var source = comp.layer(i).source;
+    if (source && source instanceof CompItem) { sources.push(source); }
+  }
+  var compName = comp.name;
+  comp.remove();
+  disposed.push(compName);
+  for (var s = 0; s < sources.length; s++) {
+    try {
+      if (sources[s].usedIn.length === 0) { disposed.push(sources[s].name); sources[s].remove(); }
+    } catch (removeError) { /* something else still uses it; leave it alone */ }
+  }`
+      : ""
+  }
+  return {
+    saved: true,
+    outputPath: file.fsName,
+    width: savedWidth,
+    height: savedHeight,
+    disposed: disposed
+  };`,
+  );
+}
+
 function renderProjectInfo(args: ToolArgs<"projectInfo">): string {
   if (args.action === "configure") {
     return wrap(
@@ -489,6 +551,7 @@ const RENDERERS: {
   applyEffect: renderApplyEffect,
   precompose: renderPrecompose,
   queueRender: renderQueueRender,
+  saveFrame: renderSaveFrame,
   projectInfo: renderProjectInfo,
 };
 

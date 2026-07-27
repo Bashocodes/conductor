@@ -34,6 +34,9 @@ export const genericAeAdapterConfig = adapterConfigSchema.parse({
           text: "${args.text}",
           font: "${args.font}",
           size_preset: "${args.sizePreset}",
+          // Omitted entirely when the recipe did not ask for an exact size, so
+          // a server that only understands presets is unaffected.
+          size_percent: "${args.sizePercent}",
           alignment: "${args.alignment}",
           position: "${args.position}",
           color: "${args.color}",
@@ -105,6 +108,15 @@ export const genericAeAdapterConfig = adapterConfigSchema.parse({
           color_space: "${args.colorSpace}",
         },
         render_settings: "${args.renderSettings}",
+      },
+    },
+    saveFrame: {
+      tool: "ae_save_frame",
+      argsTemplate: {
+        composition_id: "${args.compId}",
+        time_seconds: "${args.timeSeconds}",
+        output_path: "${args.outputPath}",
+        dispose_composition: "${args.disposeComp}",
       },
     },
     projectInfo: {

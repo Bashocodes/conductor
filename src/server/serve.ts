@@ -5,7 +5,7 @@ import { createReadStream } from "node:fs";
 import { promisify } from "node:util";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
-import { mkdir, rename, stat, unlink } from "node:fs/promises";
+import { mkdir, readdir, rename, stat, unlink } from "node:fs/promises";
 
 import { createAdapterRegistryFromConfig } from "../adapters/registry.js";
 import { RecipeEngine } from "../engine/engine.js";
@@ -14,9 +14,12 @@ import type { JournalStep } from "../engine/journal.js";
 import { normalizeToolResult } from "../engine/normalizeResult.js";
 import { loadConductorConfig } from "../mcp/config.js";
 import { McpClientManager } from "../mcp/client.js";
-import { CINEMATIC_LOOKS } from "../recipes/cinematic-look-lab.js";
+import {
+  CINEMATIC_LOOKS,
+  DEFAULT_SAMPLE_LOGO,
+} from "../recipes/cinematic-look-lab.js";
 import { getRecipe, listRecipes } from "../recipes/index.js";
-import { CONSOLE_HTML } from "./page.js";
+import { renderConsoleHtml } from "./page.js";
 import { createPrivacyCleanCopy } from "./privacy.js";
 
 /**
@@ -38,6 +41,8 @@ export interface ServeOptions {
   configPath: string;
   port: number;
   host?: string;
+  /** The one HTTPS shell origin allowed to call this loopback server. */
+  publicOrigin?: string;
 }
 
 interface PendingRender {
@@ -45,6 +50,20 @@ interface PendingRender {
   renderPath: string;
   postProcess?: "hevc-hlg";
   templateApplied: string | null;
+}
+
+/**
+ * One generated sample. `files` lists everything to remove when the sample is
+ * superseded, so cleanup never has to know which kind it was looking at.
+ */
+interface PreviewEntry {
+  look: string;
+  clip: string;
+  kind: "clip" | "still";
+  files: string[];
+  videoPath?: string;
+  thumbnailPath?: string;
+  imagePath?: string;
 }
 
 /**
@@ -74,18 +93,70 @@ function isLoopbackHost(hostHeader: string | undefined, port: number): boolean {
   return allowed.has(hostHeader.toLowerCase());
 }
 
-function isSameOrigin(value: string | undefined, port: number): boolean {
-  if (value === undefined || value === "" || value === "null") return true;
+function normalizePublicOrigin(value: string | undefined): string | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
+  const origin = new URL(value);
+  if (
+    origin.protocol !== "https:" ||
+    origin.username !== "" ||
+    origin.password !== "" ||
+    origin.pathname !== "/" ||
+    origin.search !== "" ||
+    origin.hash !== ""
+  ) {
+    throw new Error(
+      "CONDUCTOR_PUBLIC_ORIGIN must be one exact HTTPS origin, for example https://director.aikizi.com",
+    );
+  }
+  return origin.origin;
+}
+
+function isLoopbackOrigin(origin: URL): boolean {
+  return (
+    origin.protocol === "http:" &&
+    (origin.hostname === "127.0.0.1" || origin.hostname === "localhost" || origin.hostname === "::1")
+  );
+}
+
+function isAllowedCorsOrigin(
+  value: string | undefined,
+  publicOrigin: string | undefined,
+): value is string {
+  if (value === undefined || value === "" || value === "null") return false;
   try {
     const origin = new URL(value);
-    return (
-      origin.protocol === "http:" &&
-      (origin.hostname === "127.0.0.1" || origin.hostname === "localhost" || origin.hostname === "::1") &&
-      origin.port === String(port)
-    );
+    return origin.origin === publicOrigin || isLoopbackOrigin(origin);
   } catch {
     return false;
   }
+}
+
+function isAllowedRequestSource(
+  value: string | undefined,
+  publicOrigin: string | undefined,
+): boolean {
+  if (value === undefined || value === "" || value === "null") return true;
+  try {
+    const origin = new URL(value);
+    return origin.origin === publicOrigin || isLoopbackOrigin(origin);
+  } catch {
+    return false;
+  }
+}
+
+function applyCorsHeaders(
+  request: IncomingMessage,
+  response: ServerResponse,
+  publicOrigin: string | undefined,
+): string | undefined {
+  const origin = typeof request.headers.origin === "string"
+    ? request.headers.origin
+    : undefined;
+  if (!isAllowedCorsOrigin(origin, publicOrigin)) return undefined;
+  response.setHeader("access-control-allow-origin", origin);
+  response.setHeader("vary", "Origin");
+  response.setHeader("cross-origin-resource-policy", "cross-origin");
+  return origin;
 }
 
 function sendJson(response: ServerResponse, status: number, body: unknown): void {
@@ -255,6 +326,75 @@ export function cinematicPreviewProxyArgs(
   ];
 }
 
+/**
+ * The scale between an After Effects `saveFrameToPng` value and an HLG signal.
+ *
+ * A frame saved out of a `Rec.2100 HLG Scene W100` project is not a picture a
+ * browser can show: it holds the HLG signal divided by ten — diffuse white at
+ * 100 nits inside a 1000-nit container — which renders as a nearly black image.
+ * Ten is not a guess. It was measured against frames extracted straight from
+ * the source clip, across five patches from sky to shadow, and the
+ * reconstruction below is visually indistinguishable from the source.
+ *
+ * This holds only for that working space, which the recipe's configure step
+ * verifies before any frame is written.
+ */
+export const HLG_SCENE_SIGNAL_SCALE = 10;
+
+/**
+ * Converts an After Effects HLG still into an image a browser shows honestly:
+ * undo the scaling, invert the HLG transfer to scene light, move BT.2020
+ * primaries to BT.709, then encode sRGB. Every look goes through exactly this,
+ * so comparing two samples compares the grades and nothing else.
+ */
+export function cinematicStillDisplayArgs(
+  inputPath: string,
+  outputPath: string,
+): string[] {
+  const signal = `min(1,val/maxval*${HLG_SCENE_SIGNAL_SCALE})`;
+  // The HLG OETF's inverse: the square-law branch below half signal, the
+  // logarithmic branch above it.
+  const toSceneLight =
+    `if(lte(${signal},0.5),pow(${signal},2)/3,` +
+    `(exp((${signal}-0.55991073)/0.17883277)+0.28466892)/12)*maxval`;
+  const bt2020ToBt709 =
+    "colorchannelmixer=" +
+    "rr=1.6605:rg=-0.5876:rb=-0.0728:" +
+    "gr=-0.1246:gg=1.1329:gb=-0.0083:" +
+    "br=-0.0182:bg=-0.1006:bb=1.1187";
+  const sRgb =
+    "if(lte(val/maxval,0.0031308),12.92*val/maxval," +
+    "1.055*pow(val/maxval,1/2.4)-0.055)*maxval";
+  // The expressions contain commas, which separate filters — ffmpeg's own
+  // parser needs them quoted, so these single quotes are not shell quoting.
+  const lut = (expression: string) =>
+    `lut=c0='${expression}':c1='${expression}':c2='${expression}'`;
+  return [
+    "-y",
+    "-i", inputPath,
+    "-vf",
+    `format=gbrp16le,${lut(toSceneLight)},${bt2020ToBt709},${lut(sRgb)}`,
+    "-q:v", "3",
+    outputPath,
+  ];
+}
+
+/** One frame of the source clip, exactly as the clip itself looks. */
+export function sourceFrameArgs(
+  clipPath: string,
+  timeSeconds: number,
+  outputPath: string,
+): string[] {
+  return [
+    "-y",
+    "-ss", String(Math.max(0, timeSeconds)),
+    "-i", clipPath,
+    "-frames:v", "1",
+    "-q:v", "3",
+    outputPath,
+  ];
+}
+
 function cinematicThumbnailArgs(inputPath: string, outputPath: string): string[] {
   return [
     "-y",
@@ -269,10 +409,33 @@ function cinematicThumbnailArgs(inputPath: string, outputPath: string): string[]
 export function cinematicPreviewOutputPath(
   directory: string,
   look: string,
-  unique = `${Date.now()}-${randomUUID()}`,
+  unique: string = `${Date.now()}-${randomUUID()}`,
+  extension = "mp4",
 ): string {
   const slug = look.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  return join(directory, `${slug}-${unique}.mp4`);
+  const safeExtension = extension.replace(/[^a-z0-9]/gi, "") || "mp4";
+  return join(directory, `${slug}-${unique}.${safeExtension}`);
+}
+
+/** Reserved sample key for the ungraded source frame, which is not a look. */
+export const SOURCE_FRAME_KEY = "\u0000source-frame";
+
+/**
+ * Waits for a file to exist and stop growing.
+ *
+ * `saveFrameToPng` returns to the script before the PNG is closed, so reading
+ * it immediately finds nothing — or worse, half of it.
+ */
+async function waitForFile(path: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  let lastSize = -1;
+  while (Date.now() < deadline) {
+    const info = await stat(path).catch(() => undefined);
+    if (info !== undefined && info.size > 0 && info.size === lastSize) return true;
+    if (info !== undefined) lastSize = info.size;
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  }
+  return false;
 }
 
 async function streamLocalMedia(
@@ -287,6 +450,7 @@ async function streamLocalMedia(
     "content-type": contentType,
     "cache-control": "no-store",
     "accept-ranges": "bytes",
+    "cross-origin-resource-policy": "cross-origin",
     "x-content-type-options": "nosniff",
   };
   if (range === undefined) {
@@ -412,17 +576,61 @@ async function panelSocketCount(): Promise<number | undefined> {
   }
 }
 
+/** Removes preview files older than `maxAgeMs`. Never touches anything else. */
+export async function sweepStalePreviews(
+  directory: string,
+  maxAgeMs: number,
+): Promise<number> {
+  const entries = await readdir(directory).catch(() => []);
+  const cutoff = Date.now() - maxAgeMs;
+  let removed = 0;
+  for (const entry of entries) {
+    const path = join(directory, entry);
+    const info = await stat(path).catch(() => undefined);
+    if (info === undefined || !info.isFile() || info.mtimeMs > cutoff) continue;
+    await unlink(path).catch(() => undefined);
+    removed += 1;
+  }
+  return removed;
+}
+
 export async function startConductorServer(options: ServeOptions): Promise<{
   url: string;
+  publicOrigin?: string;
   close: () => Promise<void>;
 }> {
   const host = options.host ?? "127.0.0.1";
+  const publicOrigin = normalizePublicOrigin(
+    options.publicOrigin ?? process.env.CONDUCTOR_PUBLIC_ORIGIN,
+  );
   // New every start, so a token cannot outlive the session it belongs to.
   const sessionToken = randomUUID();
   const pendingRenders = new Map<number, PendingRender>();
-  const previewMedia = new Map<
+  const previewMedia = new Map<string, PreviewEntry>();
+  /**
+   * Local files the console is allowed to display.
+   *
+   * The stage shows the real logo, which means serving a file from outside
+   * Conductor's own folders — so the readable set is exactly the paths someone
+   * picked in a Finder dialog, plus the bundled mark. A path arriving in a
+   * request is never sufficient on its own.
+   */
+  const displayableFiles = new Set<string>([DEFAULT_SAMPLE_LOGO]);
+  /** Delivered renders, addressable by id so no path travels in a request. */
+  const deliveredRenders = new Map<string, string>();
+  /**
+   * Parameters waiting for the EventSource that will run them.
+   *
+   * EventSource cannot POST, so parameters used to travel in the query string.
+   * That silently stopped working the moment a recipe took a real motion path:
+   * a minute-long clip encodes to ~29 KB, Node refuses a request line past
+   * `maxHeaderSize` (16 KB by default), and a browser reports that to an
+   * EventSource as nothing more than a dropped connection. So the console
+   * hands the parameters over first and streams against a one-shot ticket.
+   */
+  const pendingRunParams = new Map<
     string,
-    { look: string; sourcePath: string; videoPath: string; thumbnailPath: string }
+    { recipeId: string; params: Record<string, unknown> }
   >();
   const previewDirectory = join(
     homedir(),
@@ -452,12 +660,62 @@ export async function startConductorServer(options: ServeOptions): Promise<{
       return;
     }
 
-    // Guard 2: refuse anything a different site initiated.
+    const corsOrigin = applyCorsHeaders(request, response, publicOrigin);
+
+    // Answer both the legacy Private Network Access preflight and the normal
+    // CORS preflight used by token-bearing requests. Current Chrome also puts
+    // public → loopback behind a Local Network Access permission prompt; the
+    // hosted page expects that prompt and does not attempt to suppress it.
+    if (request.method === "OPTIONS") {
+      const requestedMethod = request.headers["access-control-request-method"];
+      const requestedHeaders = String(
+        request.headers["access-control-request-headers"] ?? "",
+      )
+        .split(",")
+        .map((header) => header.trim().toLowerCase())
+        .filter(Boolean);
+      const allowedHeaders = new Set(["content-type", "x-conductor-token"]);
+      if (
+        corsOrigin === undefined ||
+        (requestedMethod !== undefined && !["GET", "HEAD", "POST"].includes(requestedMethod)) ||
+        requestedHeaders.some((header) => !allowedHeaders.has(header))
+      ) {
+        sendJson(response, 403, { error: "This cross-origin preflight is refused." });
+        return;
+      }
+      response.setHeader("access-control-allow-methods", "GET, HEAD, POST, OPTIONS");
+      response.setHeader("access-control-allow-headers", "Content-Type, X-Conductor-Token");
+      if (request.headers["access-control-request-private-network"] === "true") {
+        response.setHeader("access-control-allow-private-network", "true");
+      }
+      response.writeHead(204, {
+        "cache-control": "no-store",
+        "access-control-max-age": "600",
+      });
+      response.end();
+      return;
+    }
+
+    // Guard 2: refuse anything except the local UI, the one configured hosted
+    // console, and loopback origins used for development.
     if (
-      !isSameOrigin(request.headers.origin, boundPort) ||
-      !isSameOrigin(request.headers.referer, boundPort)
+      !isAllowedRequestSource(request.headers.origin, publicOrigin) ||
+      !isAllowedRequestSource(request.headers.referer, publicOrigin)
     ) {
       sendJson(response, 403, { error: "Cross-site requests are refused." });
+      return;
+    }
+
+    // The hosted document cannot receive a token through HTML injection. It
+    // may bootstrap the same per-process token only when the browser supplies
+    // an explicitly allowlisted Origin. Every operational route below still
+    // requires that token exactly as the local page does.
+    if (url.pathname === "/api/session" && request.method === "GET") {
+      if (corsOrigin === undefined) {
+        sendJson(response, 403, { error: "A trusted browser origin is required." });
+        return;
+      }
+      sendJson(response, 200, { token: sessionToken });
       return;
     }
 
@@ -470,9 +728,10 @@ export async function startConductorServer(options: ServeOptions): Promise<{
         // Nothing external loads; say so, so an injection has nowhere to go.
         "content-security-policy":
           "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; media-src 'self'; form-action 'none'; frame-ancestors 'none'",
+        "permissions-policy": "local-network=(self), loopback-network=(self)",
         "referrer-policy": "no-referrer",
       });
-      response.end(CONSOLE_HTML.replace("__CONDUCTOR_SESSION_TOKEN__", sessionToken));
+      response.end(renderConsoleHtml({ sessionToken, apiBase: "" }));
       return;
     }
 
@@ -522,6 +781,61 @@ export async function startConductorServer(options: ServeOptions): Promise<{
       return;
     }
 
+    /**
+     * Reports what a clip actually is, before anything is built from it.
+     *
+     * The console needs the real duration to keep a control like "one loop
+     * every 8 seconds" honest: the same request has to produce visibly the same
+     * rate on a two-second comparison and on a two-minute master, and only the
+     * duration can convert between them. Failure is reported as unavailable
+     * rather than as an error — this is an enhancement to the form, and a
+     * closed After Effects should not stop someone filling it in.
+     */
+    if (url.pathname === "/api/inspect-clip" && request.method === "POST") {
+      const body = (await readJsonBody(request)) as { path?: string };
+      const clipPath = String(body.path ?? "");
+      if (!clipPath.startsWith("/")) {
+        sendJson(response, 400, { error: "An absolute clip path is required." });
+        return;
+      }
+      const config = await loadConductorConfig(options.configPath);
+      const clients = new McpClientManager(config);
+      try {
+        const call = createAdapterRegistryFromConfig(config)
+          .get("aftereffects")
+          .mapCall("projectInfo", {
+            action: "inspect",
+            mediaPath: clipPath,
+            settings: {
+              includeColorMetadata: true,
+              includeFrameRateAndDuration: true,
+            },
+          });
+        const connection = await clients.get("aftereffects");
+        const raw = await connection.callTool(call.tool, call.args, 60_000);
+        const payload =
+          (normalizeToolResult(raw) as { structuredContent?: Record<string, unknown> })
+            .structuredContent ?? {};
+        sendJson(response, 200, {
+          available: typeof payload.durationSeconds === "number",
+          width: payload.width,
+          height: payload.height,
+          frameRate: payload.frameRate,
+          durationSeconds: payload.durationSeconds,
+          previewDurationSeconds: payload.previewDurationSeconds,
+          hasAudio: payload.hasAudio,
+        });
+      } catch (error) {
+        sendJson(response, 200, {
+          available: false,
+          detail: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        await clients.closeAll();
+      }
+      return;
+    }
+
     if (url.pathname === "/api/cinematic/preview-output") {
       const look = url.searchParams.get("look") ?? "";
       if (!(CINEMATIC_LOOKS as readonly string[]).includes(look)) {
@@ -529,8 +843,102 @@ export async function startConductorServer(options: ServeOptions): Promise<{
         return;
       }
       await mkdir(previewDirectory, { recursive: true });
+      // A still is written by After Effects itself and is a PNG; a moving
+      // sample goes through the render queue and is an mp4.
+      const extension = url.searchParams.get("kind") === "still" ? "png" : "mp4";
       sendJson(response, 200, {
-        path: cinematicPreviewOutputPath(previewDirectory, look),
+        path: cinematicPreviewOutputPath(previewDirectory, look, undefined, extension),
+      });
+      return;
+    }
+
+    /**
+     * Registers a sample and clears the ones it supersedes.
+     *
+     * Two things strand a sample: regenerating that look, and moving to a
+     * different clip. Both are cleared here, so the cache holds at most one set
+     * for the clip in front of you. Only Conductor's own preview folder is ever
+     * touched, and only once the replacement has been verified.
+     */
+    const supersedePreviews = async (look: string, clip: string, keep: string) => {
+      for (const [previousId, previous] of previewMedia) {
+        const superseded = previous.look === look || previous.clip !== clip;
+        if (!superseded || previous.files.includes(keep)) continue;
+        previewMedia.delete(previousId);
+        for (const stale of previous.files) {
+          if (resolve(dirname(stale)) !== resolve(previewDirectory)) continue;
+          await unlink(stale).catch(() => undefined);
+        }
+      }
+    };
+
+    const previewUrl = (id: string, kind: string) =>
+      `/api/cinematic/media?id=${encodeURIComponent(id)}&kind=${kind}` +
+      `&token=${encodeURIComponent(sessionToken)}`;
+
+    if (
+      url.pathname === "/api/cinematic/register-still" &&
+      request.method === "POST"
+    ) {
+      const body = (await readJsonBody(request)) as {
+        look?: string;
+        path?: string;
+        clip?: string;
+      };
+      const look = String(body.look ?? "");
+      const path = String(body.path ?? "");
+      const clip = String(body.clip ?? "");
+      if (!(CINEMATIC_LOOKS as readonly string[]).includes(look)) {
+        sendJson(response, 400, { error: "Unknown cinematic look." });
+        return;
+      }
+      if (
+        extname(path).toLowerCase() !== ".png" ||
+        resolve(dirname(path)) !== resolve(previewDirectory)
+      ) {
+        sendJson(response, 400, {
+          error: "A still must come from Conductor’s private preview folder.",
+        });
+        return;
+      }
+      const ffmpeg = await findExecutable(FFMPEG_CANDIDATES);
+      if (ffmpeg === undefined) {
+        sendJson(response, 500, { error: "ffmpeg is required to prepare a still." });
+        return;
+      }
+      // After Effects returns from saveFrameToPng before the file is closed,
+      // so the frame is waited for rather than assumed.
+      const raw = await waitForFile(path, 8_000);
+      if (!raw) {
+        sendJson(response, 500, {
+          error: "After Effects reported a saved frame, but no file appeared.",
+        });
+        return;
+      }
+      const imagePath = `${path.slice(0, -extname(path).length)}.display.jpg`;
+      await execFileAsync(ffmpeg, cinematicStillDisplayArgs(path, imagePath), {
+        timeout: 60_000,
+        maxBuffer: 4_000_000,
+      });
+      await assertRenderedFile(imagePath);
+      // The 16-bit frame was an intermediate — six megabytes of it — and the
+      // displayable copy is verified, so it does not stay on disk.
+      await unlink(path).catch(() => undefined);
+      await supersedePreviews(look, clip, imagePath);
+      const id = randomUUID();
+      previewMedia.set(id, {
+        look,
+        clip,
+        kind: "still",
+        files: [imagePath],
+        imagePath,
+      });
+      sendJson(response, 200, {
+        id,
+        look,
+        kind: "still",
+        imageUrl: previewUrl(id, "image"),
+        thumbnailUrl: previewUrl(id, "image"),
       });
       return;
     }
@@ -542,9 +950,11 @@ export async function startConductorServer(options: ServeOptions): Promise<{
       const body = (await readJsonBody(request)) as {
         look?: string;
         path?: string;
+        clip?: string;
       };
       const look = String(body.look ?? "");
       const path = String(body.path ?? "");
+      const clip = String(body.clip ?? "");
       if (!(CINEMATIC_LOOKS as readonly string[]).includes(look)) {
         sendJson(response, 400, { error: "Unknown cinematic look." });
         return;
@@ -579,36 +989,134 @@ export async function startConductorServer(options: ServeOptions): Promise<{
       );
       await assertRenderedFile(videoPath);
       await assertRenderedFile(thumbnailPath);
+      await supersedePreviews(look, clip, videoPath);
       const id = randomUUID();
       previewMedia.set(id, {
         look,
-        sourcePath: path,
+        clip,
+        kind: "clip",
+        files: [path, videoPath, thumbnailPath],
         videoPath,
         thumbnailPath,
       });
-      const token = encodeURIComponent(sessionToken);
       sendJson(response, 200, {
         id,
         look,
-        thumbnailUrl: `/api/cinematic/media?id=${encodeURIComponent(id)}&kind=thumbnail&token=${token}`,
-        videoUrl: `/api/cinematic/media?id=${encodeURIComponent(id)}&kind=video&token=${token}`,
+        kind: "clip",
+        thumbnailUrl: previewUrl(id, "thumbnail"),
+        videoUrl: previewUrl(id, "video"),
       });
       return;
     }
 
     if (url.pathname === "/api/cinematic/media" && request.method === "GET") {
       const media = previewMedia.get(url.searchParams.get("id") ?? "");
-      const kind = url.searchParams.get("kind");
-      if (media === undefined || (kind !== "thumbnail" && kind !== "video")) {
+      const kind = url.searchParams.get("kind") ?? "";
+      const file =
+        kind === "video"
+          ? media?.videoPath
+          : kind === "thumbnail"
+            ? media?.thumbnailPath
+            : kind === "image"
+              ? media?.imagePath
+              : undefined;
+      if (file === undefined) {
         sendJson(response, 404, { error: "Preview media not found." });
         return;
       }
       await streamLocalMedia(
         request,
         response,
-        kind === "video" ? media.videoPath : media.thumbnailPath,
+        file,
         kind === "video" ? "video/mp4" : "image/jpeg",
       );
+      return;
+    }
+
+    /**
+     * One frame of the source clip, so the stage has something real to show
+     * before any look has been generated. This is the clip untouched — no
+     * grade, no HDR — which is exactly what makes it useful for judging where
+     * a logo sits and how large a watermark reads.
+     */
+    if (url.pathname === "/api/source-frame" && request.method === "POST") {
+      const body = (await readJsonBody(request)) as {
+        clip?: string;
+        timeSeconds?: number;
+      };
+      const clip = String(body.clip ?? "");
+      if (!clip.startsWith("/")) {
+        sendJson(response, 400, { error: "An absolute clip path is required." });
+        return;
+      }
+      const ffmpeg = await findExecutable(FFMPEG_CANDIDATES);
+      if (ffmpeg === undefined) {
+        sendJson(response, 500, { error: "ffmpeg is required to read a frame." });
+        return;
+      }
+      await mkdir(previewDirectory, { recursive: true });
+      const framePath = join(previewDirectory, `source-frame-${randomUUID()}.jpg`);
+      await execFileAsync(
+        ffmpeg,
+        sourceFrameArgs(clip, Number(body.timeSeconds ?? 0), framePath),
+        { timeout: 60_000, maxBuffer: 4_000_000 },
+      );
+      await assertRenderedFile(framePath);
+      for (const [previousId, previous] of previewMedia) {
+        if (previous.look !== SOURCE_FRAME_KEY) continue;
+        previewMedia.delete(previousId);
+        for (const stale of previous.files) await unlink(stale).catch(() => undefined);
+      }
+      const id = randomUUID();
+      previewMedia.set(id, {
+        look: SOURCE_FRAME_KEY,
+        clip,
+        kind: "still",
+        files: [framePath],
+        imagePath: framePath,
+      });
+      sendJson(response, 200, { id, imageUrl: previewUrl(id, "image") });
+      return;
+    }
+
+    /**
+     * Serves a local image the person themselves chose — the brand logo — so
+     * the stage can show the actual mark rather than a rectangle standing in
+     * for one. Only paths returned by a Finder dialog, plus the bundled mark,
+     * are ever readable.
+     */
+    if (url.pathname === "/api/local-image" && request.method === "GET") {
+      const path = url.searchParams.get("path") ?? "";
+      if (!displayableFiles.has(path)) {
+        sendJson(response, 403, {
+          error: "That file was not chosen in Conductor, so it is not readable.",
+        });
+        return;
+      }
+      const type = extname(path).toLowerCase() === ".png" ? "image/png" : "image/jpeg";
+      await streamLocalMedia(request, response, path, type);
+      return;
+    }
+
+    /**
+     * Opens a delivered render in QuickTime.
+     *
+     * Chrome cannot decode HEVC Main 10 HLG — a <video> pointed at the
+     * delivery never even reports its duration — and the only way to show it
+     * in the page would be an SDR proxy, which is precisely the degradation
+     * this pipeline exists to avoid. QuickTime plays the delivered file itself,
+     * in HDR, so that is what the console offers. Only files Conductor
+     * delivered in this session can be opened.
+     */
+    if (url.pathname === "/api/delivery/open" && request.method === "POST") {
+      const body = (await readJsonBody(request)) as { id?: string };
+      const target = deliveredRenders.get(String(body.id ?? ""));
+      if (target === undefined) {
+        sendJson(response, 404, { error: "That delivery is not from this session." });
+        return;
+      }
+      await execFileAsync("/usr/bin/open", ["-a", "QuickTime Player", target]);
+      sendJson(response, 200, { opened: target });
       return;
     }
 
@@ -636,6 +1144,9 @@ export async function startConductorServer(options: ServeOptions): Promise<{
         prompt: String(body.prompt ?? "Choose a file"),
         ...(body.suggestedName === undefined ? {} : { suggestedName: String(body.suggestedName) }),
       });
+      // Picking a file in Finder is the person granting Conductor sight of it;
+      // that grant is what /api/local-image checks against later.
+      if (chosen.path !== undefined) displayableFiles.add(chosen.path);
       sendJson(response, 200, chosen);
       return;
     }
@@ -688,6 +1199,32 @@ export async function startConductorServer(options: ServeOptions): Promise<{
 
     if (url.pathname === "/api/render" && request.method === "GET") {
       await streamRender(url, response);
+      return;
+    }
+
+    if (url.pathname === "/api/run-params" && request.method === "POST") {
+      const body = (await readJsonBody(request)) as {
+        recipeId?: string;
+        params?: Record<string, unknown>;
+      };
+      const recipeId = String(body.recipeId ?? "");
+      if (getRecipe(recipeId) === undefined) {
+        sendJson(response, 400, { error: `Unknown recipe '${recipeId}'` });
+        return;
+      }
+      // A ticket is consumed by the run that follows it. Abandoned ones — a
+      // reload between the two calls — must not accumulate.
+      while (pendingRunParams.size >= 16) {
+        const oldest = pendingRunParams.keys().next().value;
+        if (oldest === undefined) break;
+        pendingRunParams.delete(oldest);
+      }
+      const id = randomUUID();
+      pendingRunParams.set(id, {
+        recipeId,
+        params: (body.params ?? {}) as Record<string, unknown>,
+      });
+      sendJson(response, 200, { id });
       return;
     }
 
@@ -844,6 +1381,7 @@ export async function startConductorServer(options: ServeOptions): Promise<{
     };
 
     const delivered: string[] = [];
+    const deliveredIds: Array<{ id: string; outputPath: string }> = [];
     for (let position = 0; position < requestedIndices.length; position += 1) {
       const renderQueueIndex = requestedIndices[position] as number;
       const queuedItem = queuedItems.find((item) => item.index === renderQueueIndex);
@@ -917,6 +1455,13 @@ export async function startConductorServer(options: ServeOptions): Promise<{
         }
 
         delivered.push(pending.outputPath);
+        // Addressable by id so the console can offer to play it without ever
+        // handing a path back to the server.
+        deliveredIds.push({ id: randomUUID(), outputPath: pending.outputPath });
+        deliveredRenders.set(
+          deliveredIds[deliveredIds.length - 1]!.id,
+          pending.outputPath,
+        );
         pendingRenders.delete(renderQueueIndex);
       } catch (error) {
         send("done", {
@@ -941,6 +1486,7 @@ export async function startConductorServer(options: ServeOptions): Promise<{
       status: "completed",
       rendered: requestedIndices.length,
       outputPaths: delivered,
+      deliveries: deliveredIds,
       projectPath,
     });
     response.end();
@@ -948,18 +1494,34 @@ export async function startConductorServer(options: ServeOptions): Promise<{
 
   /** Streams step-by-step progress; a recipe can spend a minute inside After Effects. */
   async function streamRun(url: URL, response: ServerResponse): Promise<void> {
-    const recipe = getRecipe(url.searchParams.get("recipe") ?? "");
+    // A ticket from /api/run-params, or — for a small call by hand — the
+    // recipe and parameters directly.
+    const ticket = url.searchParams.get("run");
+    const claimed = ticket === null ? undefined : pendingRunParams.get(ticket);
+    if (ticket !== null) {
+      if (claimed === undefined) {
+        sendJson(response, 400, {
+          error: "That run was already started, or its parameters expired. Try again.",
+        });
+        return;
+      }
+      pendingRunParams.delete(ticket);
+    }
+
+    const recipe = getRecipe(claimed?.recipeId ?? url.searchParams.get("recipe") ?? "");
     if (recipe === undefined) {
       sendJson(response, 400, { error: "Unknown recipe" });
       return;
     }
 
-    let params: Record<string, unknown> = {};
-    try {
-      params = JSON.parse(url.searchParams.get("params") ?? "{}") as Record<string, unknown>;
-    } catch {
-      sendJson(response, 400, { error: "Parameters were not valid JSON" });
-      return;
+    let params: Record<string, unknown> = claimed?.params ?? {};
+    if (claimed === undefined) {
+      try {
+        params = JSON.parse(url.searchParams.get("params") ?? "{}") as Record<string, unknown>;
+      } catch {
+        sendJson(response, 400, { error: "Parameters were not valid JSON" });
+        return;
+      }
     }
 
     response.writeHead(200, {
@@ -1046,6 +1608,11 @@ export async function startConductorServer(options: ServeOptions): Promise<{
     }
   }
 
+  // Samples from sessions that were closed or killed have nothing pointing at
+  // them any more, so nothing would ever clear them. A day is long enough that
+  // a second console running right now keeps its own.
+  await sweepStalePreviews(previewDirectory, 24 * 60 * 60 * 1000);
+
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(options.port, host, () => {
@@ -1061,6 +1628,7 @@ export async function startConductorServer(options: ServeOptions): Promise<{
 
   return {
     url: `http://${host}:${port}/`,
+    publicOrigin,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }

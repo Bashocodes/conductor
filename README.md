@@ -106,6 +106,26 @@ Every real run writes a structured JSON journal under `runs/`, including mapped
 calls, bounded result summaries, durations, skips, verification failures, and
 the final render handoff.
 
+## Local console and hosted shell
+
+Start the standalone local console with:
+
+```sh
+conductor serve --no-open
+```
+
+It binds only to `127.0.0.1`. Loopback browser origins work without further
+configuration. If the static console is hosted on HTTPS, allow exactly that one
+origin when starting the local engine:
+
+```sh
+CONDUCTOR_PUBLIC_ORIGIN=https://director.aikizi.com conductor serve --no-open
+```
+
+The hosted console displays this command with its own origin filled in. The
+server never uses a wildcard CORS origin; all operational routes still require
+the per-process session token.
+
 ## Reference recipes
 
 All four alpha recipes target the logical `aftereffects` server and end with
@@ -147,7 +167,10 @@ queue-verified-transition-render     queueRender    /renders/transition.mov
 
 ### `hdr-safe-grade`
 
-Applies the established technical HLG chain at one of three strengths.
+Applies the established technical HLG chain at one of three strengths. The
+console no longer offers it as a separate page — `cinematic-look-lab`'s
+Technical HDR look is the same chain — but it remains available from the CLI
+and the library as the smallest reference grade.
 `Natural HDR` is preselected and preserves the current approved look;
 `Vivid HDR` adds a controlled lift and richer color; `Impact HDR` is the
 noticeable “wow, this is HDR” option while retaining over-range highlights.
@@ -176,26 +199,56 @@ next Beat Sync Studio is documented in
 analysis from AE execution and does not claim beat sync until the Adobe marker
 pass has been reconciled and saved.
 
-### `cinematic-look-lab`
+### `cinematic-look-lab` — HDR Cinema Studio
 
 Creates a controlled comparison from one representative two-second source
-window, then renders the chosen treatment across the complete clip. The seven
-AE-native looks are Clean Cinema, Golden Hour, Teal & Amber, Dream Bloom, Film
-Noir, Neon Night, and Bleach Bypass. Previews and finals share the same
-32-bpc HLG composition and effect chain; only duration and source offset differ.
+window, then renders the chosen treatment across the complete clip. The eight
+AE-native choices are Technical HDR, Clean Cinema, Golden Hour, Teal & Amber,
+Dream Bloom, Film Noir, Neon Night, and Bleach Bypass. **Technical HDR applies
+no look at all**, so this one recipe covers both the plain colour-managed HLG
+delivery and every graded one; with the logo and watermark switched off it is
+exactly the `hdr-safe-grade` chain. Samples and finals share the same 32-bpc
+HLG composition and effect chain; only duration and source offset differ.
 
-The console presents real rendered previews in a seven-card gallery. A card
-opens a larger looping viewer with left/right keyboard navigation and a
-fullscreen control. Its viewing proxy is ColorSync tone-mapped to BT.709 for
-the browser; the untouched delivery remains verified 10-bit HLG.
+The console presents real samples in a card gallery. A sample is **one frame**,
+written straight out of the open After Effects session with
+`CompItem.saveFrameToPng` — the same effect chain as the master, without the
+render queue, `aerender`, or an encode. That is about ten seconds per look
+rather than a minute, and the scaffolding composition is removed once the frame
+is written. Each card generates on its own, so comparing two looks does not mean
+building eight; selecting a look that is already selected clears it back to
+Technical HDR.
+
+A frame written in a `Rec.2100 HLG Scene W100` project is not something a
+browser can show — it holds the HLG signal divided by ten, and renders almost
+black. Conductor converts it: undo the scaling, invert the HLG transfer to scene
+light, move BT.2020 primaries to BT.709, encode sRGB. The scale was measured
+against frames taken straight from the source clip rather than assumed.
+
+Alongside the controls is a **live stage** at the clip's aspect ratio: the
+graded frame with the logo and the moving watermark drawn over it at their real
+size, placement and visibility. The brand layers are drawn in the browser, so
+changing a logo's opacity or a watermark's size answers immediately; the After
+Effects sample deliberately carries the look alone.
+
+A finished delivery is offered in a **Rendered** tab, which opens it in
+QuickTime. It is not played in the page: Chrome cannot decode HEVC Main 10 HLG,
+and showing it inline would mean converting it to SDR first.
 
 Branding is built as editable After Effects layers above the grade:
 
 - a local multi-logo library with position, custom coordinates, relative size,
   and visibility controls;
 - the bundled Sample logo at the established top-right safe position; and
-- an editable `sample_` watermark with font, visibility, motion rhythm, and
-  speed controls. Its default 10% visibility means 90% transparency.
+- an editable `sample_` watermark with font, type size as a percentage of the
+  frame, visibility, and a motion path. Its default 10% visibility means 90%
+  transparency.
+
+The watermark's motion is a `watermarkPath` parameter: normalized keyframes
+sampled from a continuous curve, so the mark travels evenly instead of stopping
+at every key. The console generates it from shape, speed, travel and centre
+controls, and scales the loop count to the clip's real duration — so a
+two-second sample moves at the rate the master will.
 
 ```text
 inspect-cinematic-source             projectInfo
@@ -203,10 +256,10 @@ configure-cinematic-hlg-project      projectInfo
 build-cinematic-composition          createComp     Preview / Full
 prepare-cinematic-source             precompose     representative offset
 cinematic-hdr-*                      applyEffect    Natural / Vivid / Impact
-<selected-look-effects>              applyEffect    one of seven chains
+<selected-look-effects>              applyEffect    none for Technical HDR
 place-project-logo                   addMediaLayer  optional
 add-moving-watermark                 addTextLayer   optional
-animate-moving-watermark             setKeyframes   closed safe-area path
+animate-moving-watermark             setKeyframes   sampled continuous path
 queue-cinematic-hlg-render           queueRender    validated HEVC HLG
 ```
 

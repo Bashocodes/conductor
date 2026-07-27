@@ -52,8 +52,15 @@ export class FakeAeServer implements McpServerConnection {
               ? {
                   width: 3840,
                   height: 2160,
+                  pixelAspect: 1,
                   frameRate: 25,
                   durationSeconds: 12,
+                  // What the real inspect reports, so a recipe can build a
+                  // short comparison from the middle of the clip.
+                  previewDurationSeconds: 2,
+                  representativeTimeSeconds: 5,
+                  hasVideo: true,
+                  hasAudio: true,
                   sourceColorSpace: "Rec.709 Gamma 2.4",
                 }
               : {
@@ -75,6 +82,7 @@ export class FakeAeServer implements McpServerConnection {
         return {
           structuredContent: {
             compId: `comp-${this.#compCount}`,
+            durationSeconds: args.durationSeconds,
           },
         };
       case "fake_add_text_layer":
@@ -82,6 +90,17 @@ export class FakeAeServer implements McpServerConnection {
         return {
           structuredContent: {
             layerId: `text-${this.#layerCount}`,
+            fontSize: args.sizePercent,
+          },
+        };
+      case "fake_add_media_layer":
+        this.#layerCount += 1;
+        return {
+          structuredContent: {
+            layerId: `media-${this.#layerCount}`,
+            widthPixels: 240,
+            position: [args.customXPercent, args.customYPercent],
+            opacity: args.opacity,
           },
         };
       case "fake_precompose":
@@ -114,6 +133,17 @@ export class FakeAeServer implements McpServerConnection {
           structuredContent: {
             applied: true,
             property: args.property,
+            keyCount: Array.isArray(args.keyframes) ? args.keyframes.length : 0,
+          },
+        };
+      case "fake_save_frame":
+        return {
+          structuredContent: {
+            saved: true,
+            outputPath: args.outputPath,
+            width: 3840,
+            height: 2160,
+            disposed: args.disposeComp === true ? ["preview comp"] : [],
           },
         };
       case "fake_queue_render":

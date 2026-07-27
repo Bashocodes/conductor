@@ -10,6 +10,7 @@ export const toolOperationSchema = z.enum([
   "applyEffect",
   "precompose",
   "queueRender",
+  "saveFrame",
   "projectInfo",
 ]);
 
@@ -56,6 +57,12 @@ const addTextLayerArgsSchema = z
     text: z.string().min(1),
     font: z.string().min(1),
     sizePreset: z.enum(["watermark", "small", "medium", "large"]),
+    /**
+     * An exact size, as a percentage of the composition's height, which wins
+     * over the preset when present. A preset cannot answer "a little smaller
+     * than that", and type sized in pixels does not survive a change of frame.
+     */
+    sizePercent: z.number().positive().max(50).optional(),
     alignment: z.enum(["left", "center", "right"]),
     position: z.tuple([z.number().finite(), z.number().finite()]),
     color: z.string().min(1),
@@ -149,6 +156,28 @@ const queueRenderArgsSchema = z
   })
   .strict();
 
+/**
+ * A single frame, written straight from the open session.
+ *
+ * `CompItem.saveFrameToPng` renders one frame in milliseconds without the
+ * render queue and without launching `aerender`, which is the whole cost of a
+ * moving sample. That makes a look comparison something you watch appear
+ * rather than something you wait out.
+ */
+const saveFrameArgsSchema = z
+  .object({
+    compId: z.string().min(1),
+    timeSeconds: z.number().nonnegative(),
+    outputPath: z.string().min(1),
+    /**
+     * Removes the composition — and any precompositions it alone used — once
+     * the frame is written. A sample is scaffolding; leaving eight of them in
+     * someone's project every time they compare looks is not acceptable.
+     */
+    disposeComp: z.boolean().default(false),
+  })
+  .strict();
+
 const projectInfoArgsSchema = z
   .object({
     action: z.enum(["inspect", "configure"]),
@@ -165,6 +194,7 @@ export const toolArgsSchemas = {
   applyEffect: applyEffectArgsSchema,
   precompose: precomposeArgsSchema,
   queueRender: queueRenderArgsSchema,
+  saveFrame: saveFrameArgsSchema,
   projectInfo: projectInfoArgsSchema,
 } as const satisfies Record<ToolOperation, z.ZodTypeAny>;
 
@@ -202,6 +232,10 @@ export interface ToolContract {
       renderQueueIndex?: number;
       postProcess?: "hevc-hlg";
     };
+  };
+  saveFrame: {
+    args: z.infer<typeof saveFrameArgsSchema>;
+    result: { saved: boolean; outputPath: string };
   };
   projectInfo: {
     args: z.infer<typeof projectInfoArgsSchema>;

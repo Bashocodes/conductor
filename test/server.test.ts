@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
@@ -9,14 +9,26 @@ import {
   automaticProjectPath,
   cinematicPreviewOutputPath,
   cinematicPreviewProxyArgs,
+  cinematicStillDisplayArgs,
+  HLG_SCENE_SIGNAL_SCALE,
+  sourceFrameArgs,
   finderRevealArgs,
   hevcHlgArgs,
   startConductorServer,
+  sweepStalePreviews,
 } from "../src/server/serve.js";
 import {
   exiftoolPrivacyCleanArgs,
   privacyCleanOutputCandidate,
 } from "../src/server/privacy.js";
+import { watermarkPathKeyframes } from "../src/recipes/watermarkMotion.js";
+import { renderConsoleHtml } from "../src/server/page.js";
+import { readFileSync } from "node:fs";
+
+const CONSOLE_HTML_SOURCE = readFileSync(
+  new URL("../src/server/page.ts", import.meta.url),
+  "utf8",
+);
 
 /**
  * Exercises the local control panel over real HTTP. Endpoints that would reach
@@ -33,12 +45,12 @@ afterEach(async () => {
 /** Reads the session token out of the served page, the way the console does. */
 async function tokenFor(url: string): Promise<string> {
   const html = await (await fetch(url)).text();
-  const match = /const TOKEN = "([^"]+)"/.exec(html);
+  const match = /let TOKEN = "([^"]+)"/.exec(html);
   if (match === null) throw new Error("No session token in the served page");
   return match[1] as string;
 }
 
-async function serve(): Promise<string> {
+async function serve(publicOrigin?: string): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "conductor-serve-"));
   const configPath = join(directory, "conductor.config.json");
   await writeFile(
@@ -51,7 +63,7 @@ async function serve(): Promise<string> {
     }),
   );
   // Port 0 asks the OS for a free port so tests never collide.
-  const server = await startConductorServer({ configPath, port: 0 });
+  const server = await startConductorServer({ configPath, port: 0, publicOrigin });
   stop = server.close;
   return server.url;
 }
@@ -82,11 +94,123 @@ describe("conductor ui server", () => {
     expect(html).not.toMatch(/href="https?:\/\//);
   });
 
+  it("serves a console whose script actually parses", async () => {
+    // The console is hand-written into one string with no build step, so
+    // nothing else would catch a stray bracket until the page silently
+    // rendered nothing. Compiling proves it parses; it is never called.
+    const html = await (await fetch(await serve())).text();
+    const script = html.slice(
+      html.lastIndexOf("<script>") + "<script>".length,
+      html.lastIndexOf("</script>"),
+    );
+    expect(script.length).toBeGreaterThan(1000);
+    expect(() => new Function(script)).not.toThrow();
+  });
+
+  it("emits a hosted copy that points only at the visitor's loopback server", () => {
+    const html = renderConsoleHtml({
+      sessionToken: "",
+      apiBase: "http://127.0.0.1:4173/",
+    });
+    expect(html).toContain('href="/director/"');
+    expect(html).toContain('aria-current="page">Conductor</a>');
+    expect(html).toContain('const API_BASE = "http://127.0.0.1:4173/"');
+    expect(html).toContain('let TOKEN = ""');
+    expect(html).toContain("conductor serve --no-open");
+    expect(html).toContain("CONDUCTOR_PUBLIC_ORIGIN=");
+    expect(html).toContain('"CONDUCTOR_PUBLIC_ORIGIN=" + window.location.origin');
+    expect(html).not.toContain("__CONDUCTOR_API_BASE__");
+  });
+
+  it("keeps the console template free of characters that TypeScript would eat", () => {
+    // The page is one String.raw template, so a backtick or a dollar-brace in
+    // the page's own JavaScript is read by TypeScript instead of the browser.
+    // That has broken this file twice; a comment is not a guard, this is.
+    const marker = "String.raw" + "`";
+    const start = CONSOLE_HTML_SOURCE.indexOf(marker) + marker.length;
+    const body = CONSOLE_HTML_SOURCE.slice(start, CONSOLE_HTML_SOURCE.lastIndexOf("`;"));
+    expect(body).not.toContain("`");
+    expect(body).not.toContain("${");
+  });
+
   it("refuses to be framed and disables MIME sniffing", async () => {
     const url = await serve();
     const response = await fetch(url);
     expect(response.headers.get("x-frame-options")).toBe("DENY");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("answers the configured public-to-loopback preflight without a wildcard", async () => {
+    const url = await serve("https://director.aikizi.com");
+    const response = await fetch(`${url}api/session`, {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://director.aikizi.com",
+        "access-control-request-method": "GET",
+        "access-control-request-headers": "x-conductor-token",
+        "access-control-request-private-network": "true",
+      },
+    });
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://director.aikizi.com");
+    expect(response.headers.get("access-control-allow-origin")).not.toBe("*");
+    expect(response.headers.get("access-control-allow-private-network")).toBe("true");
+    expect(response.headers.get("access-control-allow-headers")).toContain("X-Conductor-Token");
+  });
+
+  it("bootstraps a session only for the configured public and loopback development origins", async () => {
+    const url = await serve("https://director.aikizi.com");
+    const hosted = await fetch(`${url}api/session`, {
+      headers: { origin: "https://director.aikizi.com" },
+    });
+    expect(hosted.status).toBe(200);
+    expect(hosted.headers.get("access-control-allow-origin")).toBe("https://director.aikizi.com");
+    expect(typeof ((await hosted.json()) as { token?: unknown }).token).toBe("string");
+
+    const localDev = await fetch(`${url}api/session`, {
+      headers: { origin: "http://localhost:5190" },
+    });
+    expect(localDev.status).toBe(200);
+    expect(localDev.headers.get("access-control-allow-origin")).toBe("http://localhost:5190");
+
+    const www = await fetch(`${url}api/session`, {
+      headers: { origin: "https://www.director.aikizi.com" },
+    });
+    expect(www.status).toBe(403);
+    expect(www.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("refuses private-network preflights from every other public origin", async () => {
+    const url = await serve();
+    const response = await fetch(`${url}api/recipes`, {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://evil.example.com",
+        "access-control-request-method": "GET",
+        "access-control-request-private-network": "true",
+      },
+    });
+    expect(response.status).toBe(403);
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
+    expect(response.headers.get("access-control-allow-private-network")).toBeNull();
+  });
+
+  it("refuses every public origin until one exact HTTPS origin is configured", async () => {
+    const url = await serve();
+    const response = await fetch(`${url}api/session`, {
+      headers: { origin: "https://director.aikizi.com" },
+    });
+    expect(response.status).toBe(403);
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("refuses an unsafe or path-scoped public origin configuration", async () => {
+    await expect(serve("http://director.aikizi.com")).rejects.toThrow(
+      "CONDUCTOR_PUBLIC_ORIGIN must be one exact HTTPS origin",
+    );
+    await expect(serve("https://director.aikizi.com/conductor/")).rejects.toThrow(
+      "CONDUCTOR_PUBLIC_ORIGIN must be one exact HTTPS origin",
+    );
   });
 
   it("lists every recipe with its parameters so the form can build itself", async () => {
@@ -119,6 +243,53 @@ describe("conductor ui server", () => {
     const plan = (await response.json()) as { steps: Array<{ contractArgs: unknown }> };
     expect(plan.steps.length).toBeGreaterThan(0);
     expect(plan.steps[0]?.contractArgs).toBeDefined();
+  });
+
+  it("takes run parameters by POST, because a motion path does not fit in a URL", async () => {
+    const url = await serve();
+    const token = await tokenFor(url);
+    // A minute of watermark motion encodes to roughly 29 KB. Node refuses a
+    // request line past 16 KB, and a browser reports that to an EventSource as
+    // a bare disconnect — so this path must never be a query string again.
+    const params = {
+      clip: "/media/source.mov",
+      outputPath: "/renders/out.mp4",
+      watermarkPath: watermarkPathKeyframes({
+        motion: "Drift",
+        cycles: 6,
+        travel: 55,
+        centerXPercent: 50,
+        centerYPercent: 50,
+      }),
+    };
+    expect(encodeURIComponent(JSON.stringify(params)).length).toBeGreaterThan(16_384);
+
+    const response = await fetch(`${url}api/run-params`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-conductor-token": token },
+      body: JSON.stringify({ recipeId: "cinematic-look-lab", params }),
+    });
+    expect(response.status).toBe(200);
+    const { id } = (await response.json()) as { id: string };
+    expect(typeof id).toBe("string");
+
+    // A ticket that was never issued — or one already consumed by its run —
+    // is refused rather than silently running something else.
+    const unknown = await fetch(`${url}api/run?token=${token}&run=${id}-nope`);
+    expect(unknown.status).toBe(400);
+  });
+
+  it("refuses to stash parameters for a recipe that does not exist", async () => {
+    const url = await serve();
+    const response = await fetch(`${url}api/run-params`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-conductor-token": await tokenFor(url),
+      },
+      body: JSON.stringify({ recipeId: "nope", params: {} }),
+    });
+    expect(response.status).toBe(400);
   });
 
   it("rejects an unknown recipe rather than guessing", async () => {
@@ -189,6 +360,9 @@ describe("conductor ui server", () => {
     expect(cinematic?.params.look).toMatchObject({
       default: "Clean Cinema",
       values: [
+        // The technical grade is a look you can choose, which is what lets one
+        // recipe cover both the plain HDR delivery and the graded ones.
+        "Technical HDR",
         "Clean Cinema",
         "Golden Hour",
         "Teal & Amber",
@@ -200,6 +374,89 @@ describe("conductor ui server", () => {
     });
     expect(cinematic?.params.watermarkText?.default).toBe("sample_");
     expect(cinematic?.params.watermarkVisibility?.default).toBe(10);
+  });
+
+  it("converts an After Effects HLG still into something a browser shows honestly", () => {
+    const args = cinematicStillDisplayArgs("/tmp/look.png", "/tmp/look.display.jpg");
+    expect(args).toContain("/tmp/look.png");
+    expect(args.at(-1)).toBe("/tmp/look.display.jpg");
+    const filter = args[args.indexOf("-vf") + 1] as string;
+
+    // 16-bit throughout: the transfer is expanded, and doing that in 8 bits
+    // would band every gradient in the frame.
+    expect(filter).toContain("format=gbrp16le");
+    // The measured scale between an AE value and an HLG signal.
+    expect(HLG_SCENE_SIGNAL_SCALE).toBe(10);
+    expect(filter).toContain("val/maxval*10");
+    // The HLG OETF's own constants, inverted.
+    expect(filter).toContain("0.55991073");
+    expect(filter).toContain("0.17883277");
+    expect(filter).toContain("0.28466892");
+    // Order matters: scene light, then primaries, then the display encode.
+    // Converting primaries after the sRGB encode would be wrong.
+    const toLight = filter.indexOf("0.55991073");
+    const primaries = filter.indexOf("colorchannelmixer");
+    const display = filter.indexOf("1.055*pow");
+    expect(toLight).toBeLessThan(primaries);
+    expect(primaries).toBeLessThan(display);
+    expect(filter).toContain("rr=1.6605");
+  });
+
+  it("asks ffmpeg for one frame at the moment a sample is taken from", () => {
+    expect(sourceFrameArgs("/media/clip.mov", 4.25, "/tmp/frame.jpg")).toEqual([
+      "-y", "-ss", "4.25", "-i", "/media/clip.mov",
+      "-frames:v", "1", "-q:v", "3", "/tmp/frame.jpg",
+    ]);
+    // A negative seek is not a seek.
+    expect(sourceFrameArgs("/media/clip.mov", -3, "/tmp/frame.jpg")[2]).toBe("0");
+  });
+
+  it("names a still a png and a moving sample an mp4", () => {
+    expect(
+      cinematicPreviewOutputPath("/tmp/previews", "Teal & Amber", "unit", "png"),
+    ).toBe("/tmp/previews/teal-amber-unit.png");
+    expect(
+      cinematicPreviewOutputPath("/tmp/previews", "Teal & Amber", "unit"),
+    ).toBe("/tmp/previews/teal-amber-unit.mp4");
+  });
+
+  it("clears preview files nothing points at any more", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "conductor-sweep-"));
+    const old = join(directory, "old-sample.jpg");
+    const fresh = join(directory, "fresh-sample.jpg");
+    await writeFile(old, "x");
+    await writeFile(fresh, "x");
+    const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    await utimes(old, twoDaysAgo, twoDaysAgo);
+
+    // A console that was closed or killed leaves its samples behind, and
+    // nothing in the next session points at them. Anything recent belongs to a
+    // console that may still be running, so it stays.
+    expect(await sweepStalePreviews(directory, 24 * 60 * 60 * 1000)).toBe(1);
+    expect(await stat(fresh).then(() => true)).toBe(true);
+    expect(await stat(old).then(() => true).catch(() => false)).toBe(false);
+  });
+
+  it("refuses to display a local file nobody chose", async () => {
+    const url = await serve();
+    const response = await fetch(
+      `${url}api/local-image?path=${encodeURIComponent("/etc/passwd")}`,
+      { headers: { "x-conductor-token": await tokenFor(url) } },
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it("refuses to open a delivery it did not produce", async () => {
+    const url = await serve();
+    const response = await fetch(`${url}api/delivery/open`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-conductor-token": await tokenFor(url),
+      },
+      body: JSON.stringify({ id: "made-up" }),
+    });
+    expect(response.status).toBe(404);
   });
 
   it("refuses to reveal anything that is not an absolute path", async () => {

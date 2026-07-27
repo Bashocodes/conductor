@@ -32,6 +32,10 @@ export const fakeServerAdapterConfig = adapterConfigSchema.parse({
       tool: "fake_queue_render",
       argsTemplate: "${args}",
     },
+    saveFrame: {
+      tool: "fake_save_frame",
+      argsTemplate: "${args}",
+    },
     projectInfo: {
       tool: "fake_project_info",
       argsTemplate: "${args}",

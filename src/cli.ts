@@ -316,14 +316,18 @@ export function createProgram(
           throw new InvalidArgumentError(`Invalid port '${options.port}'`);
         }
 
-        const { url } = await startConductorServer({
+        const { url, publicOrigin } = await startConductorServer({
           configPath: globalOptions.config,
           port,
         });
         io.stdout.write(`Conductor console: ${url}\n`);
         io.stdout.write(
-          "Bound to 127.0.0.1. Cross-site requests are refused and each API call "
-          + "needs the token this session minted. Ctrl-C to stop.\n",
+          "Bound to 127.0.0.1. Requests are limited to the local console, "
+          + (publicOrigin === undefined
+            ? "loopback development origins"
+            : `${publicOrigin}, and loopback development origins`)
+          + "; every API call "
+          + "still needs the token this session minted. Ctrl-C to stop.\n",
         );
         if (options.open !== false) {
           // Best effort; the URL is printed either way.

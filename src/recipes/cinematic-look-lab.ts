@@ -1,8 +1,16 @@
 import { fileURLToPath } from "node:url";
 
-import { recipeSchema } from "../schema/recipe.js";
+import { recipeSchema, type JsonValue } from "../schema/recipe.js";
+import { DEFAULT_WATERMARK_PATH } from "./watermarkMotion.js";
 
+/**
+ * "Technical HDR" is the absence of a look: none of the look steps below name
+ * it, so their preconditions all fail and the clip is delivered with the
+ * colour-managed HLG treatment alone. It is first in the list because it is the
+ * honest baseline every other card is compared against.
+ */
 export const CINEMATIC_LOOKS = [
+  "Technical HDR",
   "Clean Cinema",
   "Golden Hour",
   "Teal & Amber",
@@ -306,122 +314,11 @@ const lookSteps = [
   ),
 ];
 
-const gentleMotion = {
-  Slow: [
-    { time: 0, value: [0.18, 0.18] },
-    { time: 0.25, value: [0.78, 0.28] },
-    { time: 0.5, value: [0.68, 0.72] },
-    { time: 0.75, value: [0.24, 0.78] },
-    { time: 1, value: [0.18, 0.18] },
-  ],
-  Medium: [
-    { time: 0, value: [0.18, 0.18] },
-    { time: 0.125, value: [0.78, 0.28] },
-    { time: 0.25, value: [0.68, 0.72] },
-    { time: 0.375, value: [0.24, 0.78] },
-    { time: 0.5, value: [0.18, 0.18] },
-    { time: 0.625, value: [0.78, 0.28] },
-    { time: 0.75, value: [0.68, 0.72] },
-    { time: 0.875, value: [0.24, 0.78] },
-    { time: 1, value: [0.18, 0.18] },
-  ],
-  Fast: [
-    { time: 0, value: [0.18, 0.18] },
-    { time: 0.0833, value: [0.78, 0.28] },
-    { time: 0.1667, value: [0.68, 0.72] },
-    { time: 0.25, value: [0.24, 0.78] },
-    { time: 0.3333, value: [0.18, 0.18] },
-    { time: 0.4167, value: [0.78, 0.28] },
-    { time: 0.5, value: [0.68, 0.72] },
-    { time: 0.5833, value: [0.24, 0.78] },
-    { time: 0.6667, value: [0.18, 0.18] },
-    { time: 0.75, value: [0.78, 0.28] },
-    { time: 0.8333, value: [0.68, 0.72] },
-    { time: 0.9167, value: [0.24, 0.78] },
-    { time: 1, value: [0.18, 0.18] },
-  ],
-};
-
-const verticalMotion = {
-  Slow: [
-    { time: 0, value: [0.82, 0.22] },
-    { time: 0.5, value: [0.82, 0.76] },
-    { time: 1, value: [0.82, 0.22] },
-  ],
-  Medium: [
-    { time: 0, value: [0.82, 0.22] },
-    { time: 0.25, value: [0.82, 0.76] },
-    { time: 0.5, value: [0.82, 0.22] },
-    { time: 0.75, value: [0.82, 0.76] },
-    { time: 1, value: [0.82, 0.22] },
-  ],
-  Fast: [
-    { time: 0, value: [0.82, 0.22] },
-    { time: 0.1667, value: [0.82, 0.76] },
-    { time: 0.3333, value: [0.82, 0.22] },
-    { time: 0.5, value: [0.82, 0.76] },
-    { time: 0.6667, value: [0.82, 0.22] },
-    { time: 0.8333, value: [0.82, 0.76] },
-    { time: 1, value: [0.82, 0.22] },
-  ],
-};
-
-const cornerMotion = {
-  Slow: [
-    { time: 0, value: [0.18, 0.18] },
-    { time: 0.25, value: [0.82, 0.18] },
-    { time: 0.5, value: [0.82, 0.78] },
-    { time: 0.75, value: [0.18, 0.78] },
-    { time: 1, value: [0.18, 0.18] },
-  ],
-  Medium: [
-    { time: 0, value: [0.18, 0.18] },
-    { time: 0.125, value: [0.82, 0.18] },
-    { time: 0.25, value: [0.82, 0.78] },
-    { time: 0.375, value: [0.18, 0.78] },
-    { time: 0.5, value: [0.18, 0.18] },
-    { time: 0.625, value: [0.82, 0.18] },
-    { time: 0.75, value: [0.82, 0.78] },
-    { time: 0.875, value: [0.18, 0.78] },
-    { time: 1, value: [0.18, 0.18] },
-  ],
-  Fast: [
-    { time: 0, value: [0.18, 0.18] },
-    { time: 0.0833, value: [0.82, 0.18] },
-    { time: 0.1667, value: [0.82, 0.78] },
-    { time: 0.25, value: [0.18, 0.78] },
-    { time: 0.3333, value: [0.18, 0.18] },
-    { time: 0.4167, value: [0.82, 0.18] },
-    { time: 0.5, value: [0.82, 0.78] },
-    { time: 0.5833, value: [0.18, 0.78] },
-    { time: 0.6667, value: [0.18, 0.18] },
-    { time: 0.75, value: [0.82, 0.18] },
-    { time: 0.8333, value: [0.82, 0.78] },
-    { time: 0.9167, value: [0.18, 0.78] },
-    { time: 1, value: [0.18, 0.18] },
-  ],
-};
-
-const staticMotion = {
-  Slow: [
-    { time: 0, value: [0.82, 0.76] },
-    { time: 1, value: [0.82, 0.76] },
-  ],
-  Medium: [
-    { time: 0, value: [0.82, 0.76] },
-    { time: 1, value: [0.82, 0.76] },
-  ],
-  Fast: [
-    { time: 0, value: [0.82, 0.76] },
-    { time: 1, value: [0.82, 0.76] },
-  ],
-};
-
 export const cinematicLookLabRecipe = recipeSchema.parse({
   id: "cinematic-look-lab",
-  title: "Cinematic Look Lab",
+  title: "HDR Cinema Studio",
   description:
-    "Builds seven real After Effects look previews, then renders the chosen HDR cinema treatment with optional logo and moving username protection.",
+    "Builds real After Effects look samples over a colour-managed HLG grade, then renders the chosen one as a verified 10-bit HDR master with optional logo and moving username protection. Choose Technical HDR for the grade alone.",
   targetServers: ["aftereffects"],
   params: {
     clip: {
@@ -438,14 +335,16 @@ export const cinematicLookLabRecipe = recipeSchema.parse({
     },
     look: {
       type: "enum",
-      description: "The selected cinematic treatment.",
+      description:
+        "The selected cinematic treatment. Technical HDR applies no look at all.",
       values: [...CINEMATIC_LOOKS],
       default: "Clean Cinema",
     },
     renderMode: {
       type: "enum",
-      description: "A two-second comparison sample or the complete source.",
-      values: ["Preview", "Full"],
+      description:
+        "Still writes one frame straight out of the open session for comparing looks; Preview renders a two-second sample; Full delivers the complete source.",
+      values: ["Still", "Preview", "Full"],
       default: "Full",
     },
     logoEnabled: {
@@ -525,17 +424,18 @@ export const cinematicLookLabRecipe = recipeSchema.parse({
       max: 100,
       default: 10,
     },
-    watermarkMotion: {
-      type: "enum",
-      description: "The closed motion rhythm used across the frame.",
-      values: ["Gentle Drift", "Vertical Rhythm", "Corner Orbit", "Static"],
-      default: "Gentle Drift",
+    watermarkSizePercent: {
+      type: "number",
+      description: "Watermark type size as a percentage of the frame height.",
+      min: 0.5,
+      max: 20,
+      default: 2.6,
     },
-    watermarkSpeed: {
-      type: "enum",
-      description: "How often the watermark completes its motion rhythm.",
-      values: ["Slow", "Medium", "Fast"],
-      default: "Slow",
+    watermarkPath: {
+      type: "json",
+      description:
+        "The watermark's motion, as normalized keyframes: time 0–1 of the clip, value [x, y] as a fraction of the frame. The console generates this from its shape, speed, travel and centre controls; passing it directly gives complete control of the path.",
+      default: DEFAULT_WATERMARK_PATH as unknown as JsonValue,
     },
     outputPath: {
       type: "string",
@@ -628,6 +528,8 @@ export const cinematicLookLabRecipe = recipeSchema.parse({
         durationSeconds: {
           $select: "${params.renderMode}",
           cases: {
+            Still:
+              "${steps.inspect-cinematic-source.result.structuredContent.previewDurationSeconds}",
             Preview:
               "${steps.inspect-cinematic-source.result.structuredContent.previewDurationSeconds}",
             Full: "${steps.inspect-cinematic-source.result.structuredContent.durationSeconds}",
@@ -662,6 +564,8 @@ export const cinematicLookLabRecipe = recipeSchema.parse({
             sourceTimeSeconds: {
               $select: "${params.renderMode}",
               cases: {
+                Still:
+                  "${steps.inspect-cinematic-source.result.structuredContent.representativeTimeSeconds}",
                 Preview:
                   "${steps.inspect-cinematic-source.result.structuredContent.representativeTimeSeconds}",
                 Full: 0,
@@ -861,6 +765,7 @@ export const cinematicLookLabRecipe = recipeSchema.parse({
         text: "${params.watermarkText}",
         font: "${params.watermarkFont}",
         sizePreset: "watermark",
+        sizePercent: "${params.watermarkSizePercent}",
         alignment: "center",
         position: [0, 0],
         color: "#ffffff",
@@ -889,31 +794,15 @@ export const cinematicLookLabRecipe = recipeSchema.parse({
         property: "position",
         timeMode: "normalized",
         coordinateSpace: "normalized-comp",
-        keyframes: {
-          $select: "${params.watermarkMotion}",
-          cases: {
-            "Gentle Drift": {
-              $select: "${params.watermarkSpeed}",
-              cases: gentleMotion,
-            },
-            "Vertical Rhythm": {
-              $select: "${params.watermarkSpeed}",
-              cases: verticalMotion,
-            },
-            "Corner Orbit": {
-              $select: "${params.watermarkSpeed}",
-              cases: cornerMotion,
-            },
-            Static: {
-              $select: "${params.watermarkSpeed}",
-              cases: staticMotion,
-            },
-          },
-        },
+        keyframes: "${params.watermarkPath}",
+        // Deliberately close to linear. Conductor eases every keyframe it
+        // writes, and the path is sampled from a continuous curve — a strong
+        // ease on each of those samples would stall the mark at every one of
+        // them, which is exactly the stutter this motion exists to avoid.
         easing: {
           type: "cubic-bezier",
           profile: "gentle-exit",
-          controlPoints: [0.33, 0, 0.67, 1],
+          controlPoints: [0.02, 0, 0.98, 1],
         },
         motionBlur: true,
       },
@@ -932,9 +821,41 @@ export const cinematicLookLabRecipe = recipeSchema.parse({
       },
     },
     {
+      // One frame, written from the session that is already open. No render
+      // queue, no aerender, no encode: this is what makes comparing looks
+      // something you watch happen rather than something you schedule.
+      id: "save-cinematic-still",
+      server: "aftereffects",
+      operation: "saveFrame",
+      precondition: '${params.renderMode} == "Still"',
+      args: {
+        compId:
+          "${steps.build-cinematic-composition.result.structuredContent.compId}",
+        timeSeconds: 0,
+        outputPath: "${params.outputPath}",
+        disposeComp: true,
+      },
+      verify: {
+        type: "object",
+        required: ["structuredContent"],
+        properties: {
+          structuredContent: {
+            type: "object",
+            required: ["saved", "outputPath"],
+            properties: {
+              saved: { type: "boolean", equals: true },
+            },
+          },
+        },
+      },
+      note:
+        "The frame is written in the project working space — scene-referred Rec.2100 HLG — so it must be converted for display before a browser can show it honestly.",
+    },
+    {
       id: "queue-cinematic-hlg-render",
       server: "aftereffects",
       operation: "queueRender",
+      precondition: '${params.renderMode} != "Still"',
       args: {
         compId:
           "${steps.build-cinematic-composition.result.structuredContent.compId}",
