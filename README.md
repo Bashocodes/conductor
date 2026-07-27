@@ -239,8 +239,8 @@ Branding is built as editable After Effects layers above the grade:
 
 - a local multi-logo library with position, custom coordinates, relative size,
   and visibility controls;
-- the bundled Sample logo at the established top-right safe position; and
-- an editable `sample_` watermark with font, type size as a percentage of the
+- a bundled placeholder logo at the established top-right safe position; and
+- an editable `yourbrand_` watermark with font, type size as a percentage of the
   frame, visibility, and a motion path. Its default 10% visibility means 90%
   transparency.
 

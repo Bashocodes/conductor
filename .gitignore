@@ -44,7 +44,8 @@ runs/
 *.flac
 *.png
 !assets/
-!assets/sample-logo-transparent.png
+# Only the neutral placeholder ships. Personal brand marks stay local.
+!assets/sample-logo.png
 *.jpg
 *.jpeg
 *.tif

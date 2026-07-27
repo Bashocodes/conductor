@@ -286,7 +286,7 @@ export function automaticProjectPath(deliveryPath: string): string {
   return join(dirname(deliveryPath), ".conductor-projects", `${projectName}.aep`);
 }
 
-/** Matches the known-good HLG delivery produced for Sample on 2026-07-25. */
+/** Matches the known-good HLG delivery verified on 2026-07-25. */
 export function hevcHlgArgs(inputPath: string, outputPath: string): string[] {
   return [
     "-y",

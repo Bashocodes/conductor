@@ -396,7 +396,7 @@ describe("conductor ui server", () => {
         "Bleach Bypass",
       ],
     });
-    expect(cinematic?.params.watermarkText?.default).toBe("sample_");
+    expect(cinematic?.params.watermarkText?.default).toBe("yourbrand_");
     expect(cinematic?.params.watermarkVisibility?.default).toBe(10);
   });
 

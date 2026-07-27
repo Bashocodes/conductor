@@ -20,8 +20,13 @@ export const CINEMATIC_LOOKS = [
   "Bleach Bypass",
 ] as const;
 
+/**
+ * A neutral placeholder so a fresh checkout brands nothing. It exists to show
+ * where a logo lands and at what size — replace it with your own mark, or add
+ * one through the console's local logo library.
+ */
 export const DEFAULT_SAMPLE_LOGO = fileURLToPath(
-  new URL("../../assets/sample-logo-transparent.png", import.meta.url),
+  new URL("../../assets/sample-logo.png", import.meta.url),
 );
 
 const duration =
@@ -409,7 +414,7 @@ export const cinematicLookLabRecipe = recipeSchema.parse({
       description: "Exact moving watermark text.",
       minLength: 1,
       maxLength: 80,
-      default: "sample_",
+      default: "yourbrand_",
     },
     watermarkFont: {
       type: "string",

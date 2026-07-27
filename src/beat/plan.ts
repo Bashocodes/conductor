@@ -78,7 +78,7 @@ export interface BeatSyncEvent {
 /**
  * Defines the edit contract before any AE work begins. Strong beats carry cuts
  * and transition peaks; ordinary beats carry restrained light/camera accents.
- * Branding pulses are opt-in because the Sample protection mark should
+ * Branding pulses are opt-in because a brand protection mark should
  * normally remain subtle rather than competing with the footage.
  */
 export function buildBeatSyncEvents(

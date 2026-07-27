@@ -1271,7 +1271,7 @@ function renderCinematicParams() {
   logoField.appendChild(el(
     "div",
     "hint",
-    "The bundled Sample mark is ready; added logo paths stay in this browser’s local library.",
+    "A placeholder mark is loaded — add your own logo to replace it. Added logo paths stay in this browser’s local library.",
   ));
   logo.appendChild(logoField);
 

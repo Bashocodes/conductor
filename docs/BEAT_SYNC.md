@@ -42,6 +42,6 @@ stage.
 - Beat hierarchy threshold
 - Short beat-synced preview before the full render
 
-Brand pulses remain off by default. The fixed Sample logo and moving
-`sample_` protection layer should stay subtle unless the user explicitly
+Brand pulses remain off by default. The fixed logo and moving
+`yourbrand_` protection layer should stay subtle unless the user explicitly
 chooses a musical branding treatment.
