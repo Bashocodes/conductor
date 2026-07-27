@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzePcm } from "../src/beat/analyze.js";
-import { instrumentTrack, type InstrumentHit } from "./helpers/instrumentTrack.js";
+import {
+  instrumentTrack,
+  type InstrumentHit,
+  type InstrumentTrackOptions,
+} from "./helpers/instrumentTrack.js";
 
 /**
  * Recall, not precision.
@@ -19,29 +23,75 @@ import { instrumentTrack, type InstrumentHit } from "./helpers/instrumentTrack.j
 
 const MATCH_TOLERANCE_SECONDS = 0.025;
 
-function recallByKind(
+interface VoiceMetrics {
+  found: number;
+  total: number;
+  meanDeviationSeconds: number | null;
+  maxDeviationSeconds: number | null;
+}
+
+function metricsByKind(
   hits: InstrumentHit[],
-  options: Parameters<typeof instrumentTrack>[2] = {},
-): Record<string, { found: number; total: number }> {
-  const { pcm, groundTruthSeconds } = instrumentTrack(7, hits, options);
+  options: InstrumentTrackOptions = {},
+): Partial<Record<InstrumentHit["kind"], VoiceMetrics>> {
+  const durationSeconds =
+    Math.max(...hits.map((hit) => hit.timeSeconds), 0) + 0.5;
+  const { pcm } = instrumentTrack(durationSeconds, hits, options);
   const detected = analyzePcm(pcm).onsets.map((onset) => onset.timeSeconds);
-  const result: Record<string, { found: number; total: number }> = {};
-  for (const truth of groundTruthSeconds) {
-    const kind = hits.find((hit) => hit.timeSeconds === truth)?.kind ?? "?";
-    const nearest = detected.reduce(
-      (best, time) => Math.min(best, Math.abs(time - truth)),
-      Infinity,
-    );
-    const bucket = result[kind] ?? { found: 0, total: 0 };
+  const availableDetections = new Set(
+    detected.map((_, index) => index),
+  );
+  const deviations = new Map<InstrumentHit["kind"], number[]>();
+  const result: Partial<
+    Record<InstrumentHit["kind"], VoiceMetrics>
+  > = {};
+
+  for (const truth of [...hits].sort(
+    (left, right) => left.timeSeconds - right.timeSeconds,
+  )) {
+    const nearest = [...availableDetections]
+      .map((index) => ({
+        index,
+        deviation: Math.abs(
+          (detected[index] as number) - truth.timeSeconds,
+        ),
+      }))
+      .sort(
+        (left, right) =>
+          left.deviation - right.deviation || left.index - right.index,
+      )[0];
+    const bucket = result[truth.kind] ?? {
+      found: 0,
+      total: 0,
+      meanDeviationSeconds: null,
+      maxDeviationSeconds: null,
+    };
     bucket.total += 1;
-    if (nearest <= MATCH_TOLERANCE_SECONDS) bucket.found += 1;
-    result[kind] = bucket;
+    if (
+      nearest !== undefined &&
+      nearest.deviation <= MATCH_TOLERANCE_SECONDS
+    ) {
+      availableDetections.delete(nearest.index);
+      bucket.found += 1;
+      const kindDeviations = deviations.get(truth.kind) ?? [];
+      kindDeviations.push(nearest.deviation);
+      deviations.set(truth.kind, kindDeviations);
+    }
+    result[truth.kind] = bucket;
+  }
+
+  for (const [kind, kindDeviations] of deviations) {
+    const bucket = result[kind] as VoiceMetrics;
+    bucket.meanDeviationSeconds =
+      kindDeviations.reduce((sum, value) => sum + value, 0) /
+      kindDeviations.length;
+    bucket.maxDeviationSeconds = Math.max(...kindDeviations);
   }
   return result;
 }
 
-function backbeat(): InstrumentHit[] {
-  const beat = 0.5;
+function backbeat(bpm: number): InstrumentHit[] {
+  const beat = 60 / bpm;
   const hits: InstrumentHit[] = [];
   for (let bar = 0; bar < 3; bar += 1) {
     const base = 0.35 + bar * beat * 4;
@@ -61,24 +111,60 @@ describe("onset recall on instrument-shaped audio", () => {
     // amplitude gate and the detector returned ZERO onsets for a kick pattern
     // over a bass drone — while still reporting excellent precision on tracks
     // whose snares it happened to find.
-    const kicks = backbeat().filter((hit) => hit.kind === "kick");
-    const recall = recallByKind(kicks);
-    expect(recall.kick?.total).toBe(6);
+    const kicks = backbeat(120).filter((hit) => hit.kind === "kick");
+    const metrics = metricsByKind(kicks);
+    expect(metrics.kick?.total).toBe(6);
     expect(
-      recall.kick?.found,
+      metrics.kick?.found,
       "kick drums under a bass drone must not be silently dropped",
-    ).toBeGreaterThan(0);
+    ).toBe(6);
   });
 
-  it("keeps snares and kicks in one mix above a recall floor", () => {
-    const recall = recallByKind(backbeat());
-    expect(recall.snare?.found).toBe(recall.snare?.total);
-    // Kick recall is a FLOOR, not a target. It currently sits at 4 of 6: the
-    // remaining loss is the low-frequency tilt of the weighted signal itself
-    // (0.35x at DC against 2x at Nyquist). Raise this number when that is
-    // improved; never lower it to make a change pass.
-    expect(recall.kick?.found).toBeGreaterThanOrEqual(4);
-  });
+  it.each([
+    {
+      name: "120 BPM backbeat",
+      bpm: 120,
+      options: {},
+    },
+    {
+      name: "96 BPM backbeat",
+      bpm: 96,
+      options: { seed: 20260728 },
+    },
+    {
+      name: "110 BPM with kick and bass sharing 60 Hz",
+      bpm: 110,
+      options: {
+        bassFrequencyHz: 60,
+        kickFundamentalHz: 60,
+        droneGain: 0.28,
+        seed: 20260729,
+      },
+    },
+  ] satisfies Array<{
+    name: string;
+    bpm: number;
+    options: InstrumentTrackOptions;
+  }>)(
+    "keeps every drum voice in the $name mix",
+    ({ bpm, options }) => {
+      const metrics = metricsByKind(backbeat(bpm), options);
+      expect(metrics.kick?.total).toBe(6);
+      // This is the recall floor, raised from 4/6 only after all three
+      // patterns reached 6/6. Never lower it to make a detector pass.
+      expect(metrics.kick?.found).toBe(6);
+      expect(metrics.snare?.found).toBe(metrics.snare?.total);
+      expect(
+        metrics.kick?.maxDeviationSeconds,
+      ).not.toBeNull();
+      expect(
+        metrics.kick?.maxDeviationSeconds ?? Infinity,
+      ).toBeLessThanOrEqual(MATCH_TOLERANCE_SECONDS);
+      expect(
+        metrics.snare?.maxDeviationSeconds ?? Infinity,
+      ).toBeLessThanOrEqual(MATCH_TOLERANCE_SECONDS);
+    },
+  );
 
   it("still refuses to invent onsets inside sustained material", () => {
     // Deliberately scoped to the interior. A finite buffer has to start and
@@ -93,5 +179,16 @@ describe("onset recall on instrument-shaped audio", () => {
       .map((onset) => onset.timeSeconds)
       .filter((time) => time > 0.25 && time < 4.75);
     expect(interior).toHaveLength(0);
+
+    const sharedFundamental = instrumentTrack(5, [], {
+      bassFrequencyHz: 60,
+      kickFundamentalHz: 60,
+      droneGain: 0.28,
+      seed: 20260729,
+    }).pcm;
+    const sharedInterior = analyzePcm(sharedFundamental).onsets
+      .map((onset) => onset.timeSeconds)
+      .filter((time) => time > 0.25 && time < 4.75);
+    expect(sharedInterior).toHaveLength(0);
   });
 });

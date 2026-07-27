@@ -24,6 +24,14 @@ export interface InstrumentHit {
   kind: "kick" | "snare" | "hat";
 }
 
+export interface InstrumentTrackOptions {
+  droneGain?: number;
+  noiseGain?: number;
+  seed?: number;
+  bassFrequencyHz?: number;
+  kickFundamentalHz?: number;
+}
+
 /** Deterministic noise: tests must not depend on Math.random. */
 function makeNoise(seed: number): () => number {
   let state = seed >>> 0;
@@ -37,6 +45,7 @@ function addHit(
   samples: Float32Array,
   hit: InstrumentHit,
   noise: () => number,
+  kickFundamentalHz: number,
 ): void {
   const start = Math.round(hit.timeSeconds * BEAT_SAMPLE_RATE);
   // Attack and decay in seconds, plus the body of each drum voice.
@@ -59,7 +68,7 @@ function addHit(
     let voice: number;
     if (hit.kind === "kick") {
       // A pitched-down sine: strong, but with a slow waveform slope.
-      const sweep = 110 * Math.exp(-t * 18) + 45;
+      const sweep = 110 * Math.exp(-t * 18) + kickFundamentalHz;
       voice = Math.sin(2 * Math.PI * sweep * t);
     } else if (hit.kind === "snare") {
       voice = 0.7 * noise() + 0.3 * Math.sin(2 * Math.PI * 190 * t);
@@ -73,10 +82,12 @@ function addHit(
 export function instrumentTrack(
   durationSeconds: number,
   hits: InstrumentHit[],
-  options: { droneGain?: number; noiseGain?: number; seed?: number } = {},
+  options: InstrumentTrackOptions = {},
 ): { pcm: Float32Array; groundTruthSeconds: number[] } {
   const droneGain = options.droneGain ?? 0.22;
   const noiseGain = options.noiseGain ?? 0.012;
+  const bassFrequencyHz = options.bassFrequencyHz ?? 82;
+  const kickFundamentalHz = options.kickFundamentalHz ?? 45;
   const noise = makeNoise(options.seed ?? 20260727);
   const samples = new Float32Array(
     Math.ceil(durationSeconds * BEAT_SAMPLE_RATE),
@@ -91,7 +102,7 @@ export function instrumentTrack(
     const t = index / BEAT_SAMPLE_RATE;
     // Sustained bass plus a slowly swelling pad. Neither is an onset, and both
     // exist to be ignored.
-    const bass = Math.sin(2 * Math.PI * 82 * t);
+    const bass = Math.sin(2 * Math.PI * bassFrequencyHz * t);
     const pad = 0.5 * Math.sin(2 * Math.PI * 330 * t)
       * (0.6 + 0.4 * Math.sin(2 * Math.PI * 0.35 * t));
     // Raised cosine, not linear: a linear ramp has a corner where it flattens,
@@ -105,7 +116,9 @@ export function instrumentTrack(
     samples[index] = ((bass + pad) * droneGain + noise() * noiseGain) * ramp;
   }
 
-  for (const hit of hits) addHit(samples, hit, noise);
+  for (const hit of hits) {
+    addHit(samples, hit, noise, kickFundamentalHz);
+  }
 
   return {
     pcm: samples,

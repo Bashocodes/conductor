@@ -84,8 +84,21 @@ So:
 
 `test/beat-instrument-recall.test.ts` covers recall against drums with finite
 attacks over sustained material, where the truth is exact because the hits were
-placed rather than detected. Its kick figure is a floor to raise, not a target
-that has been met.
+placed rather than detected. The percussive FIR keeps its 0.35 DC branch but
+reduces the second-difference coefficient from 0.4125 to 0.1, changing the
+steady low-to-high tilt from about 5.7:1 to 2.1:1. The recall floor is 6/6 kicks
+at 120 BPM, 6/6 at 96 BPM, and 6/6 when the kick and sustained bass share a
+60 Hz fundamental. The matching sustained-tone fixtures still produce no
+interior onsets. These are floors to raise, never targets to lower.
+
+`test/fixtures/binary-love-attacks.json` commits only manual annotations for
+the external copyrighted `../beat-fixtures/binary-love-12s.wav`; the audio is
+not part of the repository. The marks cover the detector-blind 4.5–12 second
+window and declare an honest ±50 ms resolution, based on the 46 ms analysis
+window used to read the spectrogram. `test/beat-real-music.test.ts` runs the
+detector against those marks when the sibling audio fixture exists and skips
+cleanly elsewhere. A 10 ms numeric step in the JSON is not a 10 ms precision
+claim.
 
 ## Planned Conductor controls
 

@@ -205,9 +205,11 @@ function median(values: number[]): number {
  * analysis and sub-hop transient localization.
  *
  * This is not source separation. The three-tap FIR blends the broadband signal
- * with its second difference: DC retains 0.35x gain while Nyquist approaches
- * 2x, matching the detector's low-to-high spectral weighting without claiming
- * to isolate drums from harmonic content.
+ * with a small second-difference branch. DC retains 0.35x gain and Nyquist
+ * reaches 0.75x: high frequencies are still favoured, but only by about 2.1:1
+ * rather than 5.7:1. That keeps low drum attacks in the spectral-flux signal.
+ * A sustained bass tone still produces no positive spectral change after its
+ * attack, so preserving its band does not turn the tone itself into onsets.
  */
 function percussiveWeightedSignal(
   pcm: ArrayLike<number>,
@@ -221,7 +223,7 @@ function percussiveWeightedSignal(
       : 0;
     const secondDifference =
       current - 2 * previous + previousPrevious;
-    weighted[sample] = 0.35 * current + 0.4125 * secondDifference;
+    weighted[sample] = 0.35 * current + 0.1 * secondDifference;
     previousPrevious = previous;
     previous = current;
   }
