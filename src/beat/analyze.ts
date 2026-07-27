@@ -256,19 +256,17 @@ function onsetEnvelope(
     }
     const spectrum = fftMagnitudes(centered, window);
     let flux = 0;
-    // The input already carries a deterministic percussive emphasis. Positive
-    // spectral changes receive the matching high-band weighting again so
-    // broadband attacks outrank sustained low/mid-frequency tones.
+    // The input already carries the percussive emphasis. Applying the same
+    // high-band curve a second time here compounded it: at 60 Hz the two
+    // stages multiplied to roughly 0.12 gain against 2.1 for a hi-hat, so a
+    // kick drum under a bass line fell below the amplitude gate and was never
+    // detected at all. Onset energy is counted flat; the emphasis stays in the
+    // signal, applied once.
     for (let bin = 1; bin < spectrum.length; bin += 1) {
       const current = Math.log1p(10 * (spectrum[bin] as number));
       const before = Math.log1p(10 * (previous[bin] as number));
       const increase = current - before;
-      if (increase > 0) {
-        const normalizedFrequency = bin / (spectrum.length - 1);
-        const weight =
-          0.35 + 1.65 * normalizedFrequency * normalizedFrequency;
-        flux += increase * weight;
-      }
+      if (increase > 0) flux += increase;
     }
     envelope[frame] = flux / (spectrum.length - 1);
     previous = spectrum;
