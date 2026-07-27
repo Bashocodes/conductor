@@ -55,6 +55,38 @@ to 16.67 ms of cut timing error. The finer sample-derived onset time matters
 for continuous parameter curves, including beat-driven effect envelopes,
 whose keyframe times are not restricted to edit boundaries.
 
+## Precision is not recall
+
+Every timing figure this project reported for most of its life measured
+**precision**: how close a detected onset sits to a known attack. Precision is
+blind to the failure that matters most, because an onset the detector never
+finds contributes no error at all. A detector that drops an entire instrument
+still reports excellent precision on whatever it did find.
+
+That is not hypothetical. The percussive emphasis was once applied twice — in
+the weighted signal and again over spectral flux — which multiplied down to
+roughly 0.12x gain at 60 Hz against 2.1x for a hi-hat. Kick drums fell below
+the amplitude gate, and a kick pattern over a bass drone returned **zero**
+onsets, while the same detector reported sub-millisecond precision on tracks
+whose snares it happened to find.
+
+So:
+
+- Any claim about detector accuracy must state recall alongside precision.
+- Click trains are step functions and every transient search finds their exact
+  sample. They are regression fixtures, not evidence of precision.
+- Precision cannot be quoted finer than the resolution of the ground truth it
+  was measured against. Marks read from a spectrogram at ~1 ms granularity
+  cannot support a sub-millisecond claim, however the arithmetic comes out.
+- Ground truth must be reproducible in the repository. A number produced from
+  a file in a temporary directory, by a procedure nobody can re-run, is an
+  assertion rather than a measurement.
+
+`test/beat-instrument-recall.test.ts` covers recall against drums with finite
+attacks over sustained material, where the truth is exact because the hits were
+placed rather than detected. Its kick figure is a floor to raise, not a target
+that has been met.
+
 ## Planned Conductor controls
 
 - Music file
