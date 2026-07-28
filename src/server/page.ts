@@ -55,7 +55,7 @@ export const CONSOLE_HTML = String.raw`<!doctype html>
       </div>
     </div>
 
-    <div>
+    <div class="work-col">
       <div class="panel panel-spaced-bottom">
         <div class="panel-title">
           <h2 id="paramsTitle">Parameters</h2>
@@ -72,7 +72,10 @@ export const CONSOLE_HTML = String.raw`<!doctype html>
 
       <div class="panel">
         <h2 id="outTitle">Output</h2>
-        <div id="out"><div class="empty">Nothing yet. Preview a plan, or run a recipe.</div></div>
+        <div id="outNotice" aria-live="polite"></div>
+        <div class="out-scroll" id="out" tabindex="0" aria-label="Run steps and output">
+          <div class="empty">Nothing yet. Preview a plan, or run a recipe.</div>
+        </div>
       </div>
     </div>
 

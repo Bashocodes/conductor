@@ -54,11 +54,17 @@
 
   /* Controls on the left, the frame they describe on the right. Judging a
      watermark's size by reading "2.6%" is not judging it at all. */
-  .grid { display: grid; grid-template-columns: 226px minmax(320px,1fr) minmax(300px,392px);
+  .grid { display: grid; grid-template-columns: 226px minmax(0,1fr) minmax(300px,392px);
           gap: 20px; margin-top: 20px; align-items: start; }
+  /* Recipes without a preview should spend that track on their controls and
+     output instead of reserving an empty third column. */
+  @media (min-width: 1361px) {
+    .grid:has(.stage-col[hidden]) { grid-template-columns: 226px minmax(0,1fr); }
+  }
   @media (max-width: 1360px) { .grid { grid-template-columns: 226px minmax(0,1fr); }
                                .stage-col { grid-column: 1 / -1; } }
   @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .grid > *, .panel { min-width: 0; }
   .rail, .stage-col { position: sticky; top: 20px; }
   @media (max-width: 1360px) { .stage-col { position: static; } }
   @media (max-width: 900px) { .rail { position: static; } }
@@ -138,6 +144,14 @@
   button.act:disabled { opacity: .45; cursor: not-allowed; }
   button.act.small { padding: 6px 10px; font-size: 12px; }
 
+  #outNotice:empty { display: none; }
+  .out-scroll { height: 420px; overflow-x: hidden; overflow-y: auto;
+                overscroll-behavior: contain; scrollbar-gutter: stable;
+                scrollbar-color: var(--line-2) transparent; scrollbar-width: thin; }
+  .out-scroll::-webkit-scrollbar { width: 8px; }
+  .out-scroll::-webkit-scrollbar-track { background: transparent; }
+  .out-scroll::-webkit-scrollbar-thumb { border-radius: 99px; background: var(--line-2); }
+  .out-scroll:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; border-radius: 5px; }
   .steps { list-style: none; }
   .steps li { display: flex; gap: 11px; align-items: flex-start; padding: 9px 0;
               border-bottom: 1px solid var(--line); }
@@ -145,7 +159,9 @@
   .steps .mark { flex: none; width: 18px; text-align: center; font: 12px var(--mono); }
   .steps .id { font: 12.5px var(--mono); }
   .steps .meta { margin-top: 2px; font-size: 11.5px; color: var(--ink-3); }
-  .steps .err { margin-top: 4px; font: 11.5px/1.5 var(--mono); color: var(--bad); word-break: break-word; }
+  .steps .err { max-width: 72ch; margin-top: 4px; color: var(--bad);
+                font-size: 12px; line-height: 1.55; white-space: pre-wrap;
+                overflow-wrap: anywhere; }
   .s-ok { color: var(--ok); } .s-fail { color: var(--bad); }
   .s-skip { color: var(--ink-3); } .s-run { color: var(--warn); }
 
@@ -171,9 +187,9 @@
   .brand-row { display: flex; gap: 8px; align-items: stretch; }
   .brand-row select { min-width: 0; flex: 1; }
 
-  .beat-media-list { display: grid; gap: 7px; }
+  .beat-media-list { display: grid; grid-template-columns: minmax(0,1fr); gap: 7px; min-width: 0; }
   .beat-media-row { display: flex; align-items: center; gap: 8px; padding: 7px;
-                    border: 1px solid var(--line); border-radius: 8px; background: #0f1116; }
+                    min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: #0f1116; }
   .beat-media-row code { flex: 1; min-width: 0; overflow: hidden;
                          text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
   .beat-media-row .browse { padding: 0 9px; height: 28px; }

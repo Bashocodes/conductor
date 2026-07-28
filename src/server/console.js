@@ -1010,7 +1010,9 @@ function renderBeatMediaList() {
   beatMediaPaths.forEach((path, index) => {
     const row = el("div", "beat-media-row");
     row.appendChild(el("span", "beat-media-index", String(index + 1)));
-    row.appendChild(el("code", null, path.split("/").pop()));
+    const name = el("code", null, path.split("/").pop());
+    name.title = path;
+    row.appendChild(name);
     const remove = el("button", "browse", "Remove");
     remove.type = "button";
     remove.onclick = () => {
@@ -1759,6 +1761,7 @@ function appendOutputRow(parent, entry, buttonText) {
 async function startPrivacyClean() {
   const utility = $("btnPrivacyClean");
   utility.disabled = true;
+  clearOutputNotice();
   $("outTitle").textContent = "Privacy Clean";
   $("out").innerHTML = '<div class="empty">Choose an image or video…</div>';
   try {
@@ -1820,6 +1823,34 @@ function renderSteps(steps) {
     list.appendChild(li);
   }
   return list;
+}
+
+const OUTPUT_FOLLOW_THRESHOLD = 32;
+
+function clearOutputNotice() {
+  $("outNotice").innerHTML = "";
+}
+
+function appendOutputNotice(notice) {
+  $("outNotice").appendChild(notice);
+}
+
+function showOutputNotice(notice) {
+  clearOutputNotice();
+  appendOutputNotice(notice);
+}
+
+function outputIsFollowingLatest() {
+  const output = $("out");
+  return output.scrollHeight - output.scrollTop - output.clientHeight <= OUTPUT_FOLLOW_THRESHOLD;
+}
+
+function redrawSteps(steps, followLatest) {
+  const output = $("out");
+  const previousScrollTop = output.scrollTop;
+  output.innerHTML = "";
+  output.appendChild(renderSteps(steps));
+  output.scrollTop = followLatest ? output.scrollHeight : previousScrollTop;
 }
 
 function appendFramePlacementEvidence(parent, report) {
@@ -1900,7 +1931,7 @@ function startRender(queued) {
     failure.appendChild(el("b", null, "Could not start the render."));
     failure.appendChild(document.createTextNode(
       " Conductor could not identify the exact render queue item it just created."));
-    $("out").prepend(failure);
+    appendOutputNotice(failure);
     finishInteraction();
     return;
   }
@@ -1913,7 +1944,7 @@ function startRender(queued) {
   const log = el("pre", "render-log");
   log.hidden = true;
   panel.appendChild(log);
-  $("out").prepend(panel);
+  appendOutputNotice(panel);
 
   const source = new EventSource(apiUrl(
     "/api/render?token=" + encodeURIComponent(TOKEN)
@@ -2130,6 +2161,7 @@ async function generateOneLook(look, options) {
   updateReadiness();
   renderLookCards();
   if (!settings.quiet) {
+    clearOutputNotice();
     $("outTitle").textContent = "Look sample";
     $("out").innerHTML =
       '<div class="banner warn"><b>Building one After Effects frame.</b> '
@@ -2159,6 +2191,7 @@ async function generateAllLooks() {
   running = true;
   updateReadiness();
   renderLookCards();
+  clearOutputNotice();
   $("outTitle").textContent = "Look comparison";
   $("out").innerHTML =
     '<div class="banner warn"><b>Building ' + CINEMATIC_LOOKS.length + " After Effects frames.</b> "
@@ -2275,6 +2308,7 @@ $("btnDoctor").onclick = checkDoctor;
 $("btnPrivacyClean").onclick = () => { void startPrivacyClean(); };
 
 $("btnDry").onclick = async () => {
+  clearOutputNotice();
   $("outTitle").textContent = "Planned steps — nothing was touched";
   $("out").innerHTML = '<div class="empty">Resolving…</div>';
   try {
@@ -2297,8 +2331,10 @@ $("btnRun").onclick = async () => {
   running = true;
   updateReadiness();
   renderLookCards();
+  clearOutputNotice();
   $("outTitle").textContent = "Running in After Effects";
   $("out").innerHTML = '<div class="empty">Starting…</div>';
+  $("out").scrollTop = 0;
   if (selected.id === LAB) await ensureClipInfo();
   const steps = [];
   let settled = false;
@@ -2310,21 +2346,27 @@ $("btnRun").onclick = async () => {
     streamUrl = await runStreamUrl(collectParams("Full"));
   } catch (error) {
     finishInteraction();
-    $("out").innerHTML =
-      '<div class="banner bad"><b>Could not start the run.</b> '
-      + escapeHtml(error.message) + "</div>";
+    const note = el("div", "banner bad");
+    note.appendChild(el("b", null, "Could not start the run."));
+    note.appendChild(document.createTextNode(" " + error.message));
+    showOutputNotice(note);
+    $("out").innerHTML = '<div class="empty">No steps were started.</div>';
     return;
   }
   const source = new EventSource(streamUrl);
 
-  const redraw = () => { $("out").innerHTML = ""; $("out").appendChild(renderSteps(steps)); };
+  const redraw = (followLatest) => { redrawSteps(steps, followLatest); };
 
-  source.addEventListener("step", (event) => { steps.push(JSON.parse(event.data)); redraw(); });
+  source.addEventListener("step", (event) => {
+    const followLatest = outputIsFollowingLatest();
+    steps.push(JSON.parse(event.data));
+    redraw(followLatest);
+  });
   source.addEventListener("done", (event) => {
     settled = true;
     const payload = JSON.parse(event.data);
     source.close();
-    redraw();
+    redraw(outputIsFollowingLatest());
     if (payload.status === "completed") {
       const queued = Array.isArray(payload.queued) ? payload.queued : [];
       const note = el("div", "banner " + (queued.length > 0 ? "warn" : "ok"));
@@ -2346,7 +2388,7 @@ $("btnRun").onclick = async () => {
           }
         }
       }
-      $("out").prepend(note);
+      showOutputNotice(note);
       if (queued.length > 0) {
         startRender(queued);
         return;
@@ -2362,7 +2404,7 @@ $("btnRun").onclick = async () => {
         for (const detail of payload.fieldErrors) list.appendChild(el("li", null, detail));
         note.appendChild(list);
       }
-      $("out").prepend(note);
+      showOutputNotice(note);
     }
     finishInteraction();
   });
@@ -2371,7 +2413,7 @@ $("btnRun").onclick = async () => {
     settled = true;
     source.close();
     finishInteraction();
-    $("out").prepend(Object.assign(document.createElement("div"),
+    showOutputNotice(Object.assign(document.createElement("div"),
       { className: "banner bad", textContent: "Lost the connection to Conductor." }));
   };
 };
