@@ -103,10 +103,36 @@ function cdSameName(a, b) {
  * After Effects labels parameters for humans ("Transition Completion"), while
  * recipes name intents ("progress").
  */
+/**
+ * Finds one addressable parameter inside an effect.
+ *
+ * Searches nested groups, because several stock effects file their scalars one
+ * level down: the Exposure effect keeps Exposure, Offset and Gamma Correction
+ * inside a "Master" group, so a top-level-only search missed them. That miss
+ * was not harmless — the caller then fell through to a rule that returns the
+ * effect group itself when the effect's NAME matches the wanted property, which
+ * for an effect called "Exposure" handed a PropertyGroup to the keyframe path.
+ * Keyframing a group opens a blocking modal in After Effects that stalls the
+ * MCP connection rather than raising a catchable error.
+ *
+ * Breadth-first, so a leaf at the top level still beats a deeper namesake.
+ */
 function cdEffectParam(fx, name) {
   var wanted = CD_PARAM_ALIASES[name] ? CD_PARAM_ALIASES[name] : name;
-  for (var j = 1; j <= fx.numProperties; j++) {
-    if (cdSameName(fx.property(j).name, wanted)) { return fx.property(j); }
+  var queue = [fx];
+  while (queue.length > 0) {
+    var group = queue.shift();
+    var nested = [];
+    for (var j = 1; j <= group.numProperties; j++) {
+      var child = group.property(j);
+      if (cdSameName(child.name, wanted) && child.propertyType === PropertyType.PROPERTY) {
+        return child;
+      }
+      if (child.propertyType !== PropertyType.PROPERTY && child.numProperties > 0) {
+        nested.push(child);
+      }
+    }
+    for (var n = 0; n < nested.length; n++) { queue.push(nested[n]); }
   }
   return null;
 }
@@ -250,6 +276,21 @@ function cdApplyTrack(layer, name, times, values, inInfluence, outInfluence, sco
   }
 
   var prop = cdProperty(layer, name, scopeEffect);
+
+  /*
+   * A group is not keyframable, and After Effects does not say so politely: it
+   * opens a blocking modal that stalls the MCP connection until someone
+   * dismisses it by hand, so the step dies on the bridge's timeout with an
+   * error about connectivity rather than about the property. Refuse here, where
+   * the message can still name the property that was actually resolved.
+   */
+  if (prop.propertyType !== PropertyType.PROPERTY) {
+    throw new Error(
+      "Property '" + name + "' resolved to a group, not a keyframable property" +
+      (prop.name ? " (got '" + prop.name + "')" : "") +
+      ". Name the parameter inside it instead."
+    );
+  }
 
   /*
    * setValueAtTime costs more the more keys the property already holds, so
