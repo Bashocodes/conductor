@@ -74,4 +74,51 @@ export class ScriptToolAdapter implements ToolAdapter {
       args: { [this.config.scriptArgument]: script },
     };
   }
+
+  /**
+   * How many keyframes one script may write.
+   *
+   * After Effects inserts a keyframe by walking the keys already on the
+   * property, so writing a track costs quadratically in its length: measured on
+   * a live host, 3869 keys took 10.1 s to write and a further 5.9 s to ease,
+   * against the 20 s ceiling the bridge puts on a single script. Splitting does
+   * not make the total cheaper — the last chunk still inserts into a full
+   * property — but it keeps any ONE call far below the ceiling, which is the
+   * only limit that exists.
+   *
+   * At this size the most expensive chunk of a 3869-key track measures around
+   * 5 s, leaving room for a host that is busier than the one this was tuned on.
+   *
+   * The batch API that would make all of this unnecessary crashes After
+   * Effects; see the warning in the prelude before reaching for it.
+   */
+  static readonly #keyframesPerCall = 800;
+
+  public mapCalls(
+    operation: ToolOperation,
+    args: Record<string, JsonValue>,
+    options: MapCallOptions = {},
+  ): MappedToolCall[] {
+    if (operation !== "setKeyframes" || options.allowUnresolvedReferences === true) {
+      return [this.mapCall(operation, args, options)];
+    }
+
+    const keyframes = args["keyframes"];
+    const limit = ScriptToolAdapter.#keyframesPerCall;
+    if (!Array.isArray(keyframes) || keyframes.length <= limit) {
+      return [this.mapCall(operation, args, options)];
+    }
+
+    const calls: MappedToolCall[] = [];
+    for (let start = 0; start < keyframes.length; start += limit) {
+      calls.push(
+        this.mapCall(
+          operation,
+          { ...args, keyframes: keyframes.slice(start, start + limit) },
+          options,
+        ),
+      );
+    }
+    return calls;
+  }
 }

@@ -42,7 +42,7 @@ export interface MapCallOptions {
 
 /**
  * What the engine needs from an adapter, whichever shape the server takes:
- * turn a ToolContract operation and its arguments into one concrete tool call.
+ * turn a ToolContract operation and its arguments into concrete tool calls.
  */
 export interface ToolAdapter {
   readonly serverName: string;
@@ -53,6 +53,25 @@ export interface ToolAdapter {
     args: Record<string, JsonValue>,
     options?: MapCallOptions,
   ): MappedToolCall;
+  /**
+   * The same mapping, but allowed to answer with a sequence.
+   *
+   * One step is not always one call the host can survive. A script host may
+   * cap how long a single call may run — the After Effects MCP bridge gives a
+   * script 20 seconds — while the work a step legitimately asks for scales with
+   * the material: a beat-synced light envelope on a 213-second track is 3869
+   * keyframes, and After Effects needs about 16 seconds to write and ease them.
+   * The limit is per call, not per step, so the work is split rather than
+   * refused or capped.
+   *
+   * The step still succeeds or fails as one unit, and the calls run in order.
+   * Optional: an adapter that never needs to split can leave it undefined.
+   */
+  mapCalls?(
+    operation: ToolOperation,
+    args: Record<string, JsonValue>,
+    options?: MapCallOptions,
+  ): MappedToolCall[];
 }
 
 const omitted = Symbol("omitted");
