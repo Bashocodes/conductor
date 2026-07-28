@@ -77,6 +77,31 @@ class SdkMcpServerConnection implements McpServerConnection {
     }
   }
 
+  /**
+   * The readable part of an MCP error result.
+   *
+   * A host reports a failure as content blocks rather than as a thrown error,
+   * so without this the caller sees only that "an error" occurred. Bounded,
+   * because a script host will happily hand back a whole stack trace.
+   */
+  static #errorText(content: unknown): string | undefined {
+    if (!Array.isArray(content)) return undefined;
+    const parts: string[] = [];
+    for (const block of content) {
+      if (
+        typeof block === "object" &&
+        block !== null &&
+        "text" in block &&
+        typeof (block as { text: unknown }).text === "string"
+      ) {
+        parts.push((block as { text: string }).text.trim());
+      }
+    }
+    const joined = parts.filter((part) => part.length > 0).join(" ");
+    if (joined.length === 0) return undefined;
+    return joined.length > 500 ? `${joined.slice(0, 500)}…` : joined;
+  }
+
   public async callTool(
     tool: string,
     args: Record<string, JsonValue>,
@@ -93,9 +118,15 @@ class SdkMcpServerConnection implements McpServerConnection {
       );
 
       if (result.isError === true) {
+        /* The host's own words only lived in `details`, which the journal does
+           not print, so every host-side failure read as the same four words no
+           matter what actually went wrong. Carry the text into the message. */
+        const hostText = SdkMcpServerConnection.#errorText(result.content);
         throw new ConductorMcpError(
           "TOOL_RETURNED_ERROR",
-          `MCP tool '${this.serverName}.${tool}' returned an error`,
+          hostText === undefined
+            ? `MCP tool '${this.serverName}.${tool}' returned an error`
+            : `MCP tool '${this.serverName}.${tool}' returned an error: ${hostText}`,
           {
             server: this.serverName,
             tool,

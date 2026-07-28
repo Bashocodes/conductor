@@ -250,8 +250,33 @@ function cdApplyTrack(layer, name, times, values, inInfluence, outInfluence, sco
   }
 
   var prop = cdProperty(layer, name, scopeEffect);
-  for (i = 0; i < times.length; i++) {
-    cdSetValueAtTime(layer, name, prop, times[i], values[i]);
+
+  /*
+   * setValueAtTime costs more the more keys the property already holds, so
+   * writing a track one key at a time is quadratic: a 1289-beat light envelope
+   * (3869 keys) measured 10.1 s that way, which overran the 20 s ceiling the
+   * After Effects MCP bridge imposes on a single script and failed the step
+   * with no usable error. setValuesAtTimes writes the same 3869 keys in 50 ms.
+   *
+   * It is safe for the gesture-layering this file protects: it adds to the
+   * property rather than replacing it (verified — three existing keys survived
+   * a batch write with their values intact) and it sorts unsorted input.
+   *
+   * Axis writes cannot use it. Each one reads the vector at its own time and
+   * substitutes a single component, and every write changes what the next read
+   * sees, so those must stay sequential. Axis tracks are short gestures, not
+   * beat envelopes, so they never approach the ceiling.
+   */
+  if (times.length > 0) {
+    var batched = false;
+    if (!CD_AXIS[name] && typeof prop.setValuesAtTimes === "function") {
+      try { prop.setValuesAtTimes(times, values); batched = true; } catch (e) { batched = false; }
+    }
+    if (!batched) {
+      for (i = 0; i < times.length; i++) {
+        cdSetValueAtTime(layer, name, prop, times[i], values[i]);
+      }
+    }
   }
   var eased = cdEaseKeysAtTimes(prop, times, inInfluence, outInfluence);
   applied.push({ property: name, keyCount: prop.numKeys, easedKeys: eased });
