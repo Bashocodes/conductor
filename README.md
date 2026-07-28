@@ -114,14 +114,23 @@ Start the standalone local console from this checkout with:
 pnpm serve
 ```
 
-That builds if needed and is the form that works on a fresh clone. Conductor is
-not published to npm, so `npx conductor` will not resolve; to get the bare
-`conductor` command on your `PATH`, link the checkout once:
+That builds if needed and is the form that works on a fresh clone. To get the
+bare `conductor` command on your `PATH`, link the checkout once:
 
 ```sh
 pnpm link --global
 conductor serve --no-open
 ```
+
+Conductor is not published to npm, so `npx conductor` will not resolve, but the
+repository runs directly from GitHub without a checkout at all:
+
+```sh
+npx -y github:Bashocodes/conductor serve --no-open
+```
+
+A checkout is still the practical home, since real runs need a
+`conductor.config.json` beside you and write their journals to `runs/`.
 
 It binds only to `127.0.0.1`. Loopback browser origins work without further
 configuration. If the static console is hosted on HTTPS, allow exactly that one

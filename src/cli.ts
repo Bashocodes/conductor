@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { execFile } from "node:child_process";
 
@@ -407,11 +408,22 @@ export async function main(argv = process.argv): Promise<void> {
   await createProgram().parseAsync(argv);
 }
 
+/* npm and pnpm install a bin as a symlink into node_modules/.bin, so an
+   invocation through `npx`, a global link, or a package script arrives with
+   process.argv[1] pointing at that link while import.meta.url is already the
+   resolved real path. Comparing the two unresolved made this guard fail, and a
+   failing guard here is silent: the CLI exited 0 having run nothing at all.
+   Resolve before comparing so the installed binary actually starts. */
 const entryPath = process.argv[1];
-if (
-  entryPath !== undefined &&
-  import.meta.url === pathToFileURL(entryPath).href
-) {
+let entryHref: string | undefined;
+if (entryPath !== undefined) {
+  try {
+    entryHref = pathToFileURL(realpathSync(entryPath)).href;
+  } catch {
+    entryHref = pathToFileURL(entryPath).href;
+  }
+}
+if (entryHref !== undefined && import.meta.url === entryHref) {
   main().catch((error: unknown) => {
     process.stderr.write(`${formatError(error)}\n`);
     process.exitCode = 1;
