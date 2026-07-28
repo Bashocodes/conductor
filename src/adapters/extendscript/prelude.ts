@@ -293,31 +293,32 @@ function cdApplyTrack(layer, name, times, values, inInfluence, outInfluence, sco
   }
 
   /*
-   * setValueAtTime costs more the more keys the property already holds, so
-   * writing a track one key at a time is quadratic: a 1289-beat light envelope
-   * (3869 keys) measured 10.1 s that way, which overran the 20 s ceiling the
-   * After Effects MCP bridge imposes on a single script and failed the step
-   * with no usable error. setValuesAtTimes writes the same 3869 keys in 50 ms.
+   * DO NOT replace this loop with Property.setValuesAtTimes.
    *
-   * It is safe for the gesture-layering this file protects: it adds to the
-   * property rather than replacing it (verified — three existing keys survived
-   * a batch write with their values intact) and it sorts unsorted input.
+   * The batch call is enormously faster — 3869 keys in 50 ms against 10.1 s
+   * here — and it was used for exactly one afternoon before a crash report
+   * showed what it costs. After Effects 26.3 dereferences a wild pointer
+   * inside its own argument validator:
    *
-   * Axis writes cannot use it. Each one reads the vector at its own time and
-   * substitutes a single component, and every write changes what the next read
-   * sees, so those must stay sequential. Axis tracks are short gestures, not
-   * beat envelopes, so they never approach the ceiling.
+   *   EXC_BAD_ACCESS KERN_INVALID_ADDRESS
+   *     Up_SubString
+   *     Scripting::NonHostValidate<float>::operator()
+   *     Scripting::BoundedNumberValidator<float, Scripting::Property, …>
+   *     Scripting::Property::TranslateVariantToStreamValue
+   *     DVAAEScripting::PropertyHelper::SetValuesAtTimes<…>
+   *     Scripting::Property::SetValuesAtTimes
+   *
+   * It is intermittent — several 3869-key probes survived, and one real run
+   * wrote a whole light envelope before a later step brought the host down —
+   * which is what memory corruption looks like, and is worse than a slow
+   * loop: the host dies mid-recipe and takes the user's session with it.
+   *
+   * Writing one key at a time never crashed; it was only slow. Cost grows with
+   * the keys already on the property, so a long track is quadratic. That cost
+   * is the caller's problem to bound, not a reason to reach for the batch API.
    */
-  if (times.length > 0) {
-    var batched = false;
-    if (!CD_AXIS[name] && typeof prop.setValuesAtTimes === "function") {
-      try { prop.setValuesAtTimes(times, values); batched = true; } catch (e) { batched = false; }
-    }
-    if (!batched) {
-      for (i = 0; i < times.length; i++) {
-        cdSetValueAtTime(layer, name, prop, times[i], values[i]);
-      }
-    }
+  for (i = 0; i < times.length; i++) {
+    cdSetValueAtTime(layer, name, prop, times[i], values[i]);
   }
   var eased = cdEaseKeysAtTimes(prop, times, inInfluence, outInfluence);
   applied.push({ property: name, keyCount: prop.numKeys, easedKeys: eased });
