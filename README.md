@@ -108,9 +108,18 @@ the final render handoff.
 
 ## Local console and hosted shell
 
-Start the standalone local console with:
+Start the standalone local console from this checkout with:
 
 ```sh
+pnpm serve
+```
+
+That builds if needed and is the form that works on a fresh clone. Conductor is
+not published to npm, so `npx conductor` will not resolve; to get the bare
+`conductor` command on your `PATH`, link the checkout once:
+
+```sh
+pnpm link --global
 conductor serve --no-open
 ```
 
@@ -119,12 +128,20 @@ configuration. If the static console is hosted on HTTPS, allow exactly that one
 origin when starting the local engine:
 
 ```sh
-CONDUCTOR_PUBLIC_ORIGIN=https://director.aikizi.com conductor serve --no-open
+CONDUCTOR_PUBLIC_ORIGIN=https://director.aikizi.com pnpm serve
 ```
 
-The hosted console displays this command with its own origin filled in. The
-server never uses a wildcard CORS origin; all operational routes still require
-the per-process session token.
+The hosted console displays this command with its own origin filled in, with a
+copy button. The server never uses a wildcard CORS origin; all operational
+routes still require the per-process session token.
+
+The hosted console cannot start this process — no web page can launch a local
+binary. What it does instead is watch for it: after a failed connection the card
+polls loopback and connects by itself the moment the engine answers, so the
+usual "open the tab, then start the engine" order needs no second click. That
+watcher deliberately pauses while Chrome's Local Network Access permission is
+still `prompt`, because a probe fired underneath an open prompt aborts on its
+own timeout and reports a false "unreachable".
 
 ## Reference recipes
 

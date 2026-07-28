@@ -22,9 +22,16 @@
                      border-radius: 12px; background: var(--panel); }
   .connection-card h1 { margin-bottom: 8px; font-size: 18px; }
   .connection-card p { color: var(--ink-2); line-height: 1.6; }
-  .connection-command { display: block; margin: 16px 0; padding: 11px 12px;
+  .connection-command-row { display: flex; align-items: stretch; gap: 8px; margin: 16px 0; }
+  .connection-command { flex: 1; min-width: 0; padding: 11px 12px;
                         border: 1px solid var(--line-2); border-radius: 8px;
-                        background: #0f1116; color: var(--ink); user-select: all; }
+                        background: #0f1116; color: var(--ink); user-select: all;
+                        overflow-wrap: anywhere; }
+  .connection-card button.connection-copy { flex: none; align-self: stretch; padding: 0 13px;
+                                            font-size: 12px; color: var(--ink-2); }
+  .connection-card button.connection-copy[data-copied="true"] { color: var(--ok); border-color: var(--ok); }
+  .connection-hint { margin: -6px 0 16px; color: var(--ink-3); font-size: 12.5px; line-height: 1.6; }
+  .connection-hint code { color: var(--ink-2); }
   .connection-card button { padding: 9px 15px; border: 1px solid var(--line-2);
                             border-radius: 8px; background: #1a1e26; color: var(--ink);
                             cursor: pointer; }

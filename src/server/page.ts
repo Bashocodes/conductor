@@ -22,7 +22,11 @@ export const CONSOLE_HTML = String.raw`<!doctype html>
   <section class="connection-card" id="connectionCard" data-connection-state="not-started" aria-live="polite">
     <h1 id="connectionTitle">Connect to local Conductor</h1>
     <p id="connectionMessage">Start Conductor on this machine, then connect when you are ready.</p>
-    <code class="connection-command" id="startCommand">conductor serve --no-open</code>
+    <div class="connection-command-row">
+      <code class="connection-command" id="startCommand">conductor serve --no-open</code>
+      <button type="button" class="connection-copy" id="copyCommand" aria-label="Copy the start command">Copy</button>
+    </div>
+    <p class="connection-hint" id="connectionHint" hidden></p>
     <button type="button" id="retryConnection">Connect to local Conductor</button>
   </section>
 </main>

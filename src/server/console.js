@@ -8,10 +8,44 @@ const API_BASE = CONSOLE_CONFIG.apiBase || "";
 const HOSTED_CONSOLE = TOKEN === "";
 const UNREACHABLE_TIMEOUT_MS = 5000;
 
+/* The hosted card used to print a bare `conductor serve`, which only resolves
+   if you have already linked the binary globally. Nobody has on a first run, so
+   the one instruction on the failure screen was itself unrunnable. Conductor
+   cannot be hosted — it spawns MCP servers and shells out to ffmpeg/aerender —
+   so everyone running it necessarily has a checkout. Print the command that
+   works from that checkout, and mention the link step as the shortcut. */
 if (!TOKEN && window.location.protocol === "https:") {
   $("startCommand").textContent =
-    "CONDUCTOR_PUBLIC_ORIGIN=" + window.location.origin + " conductor serve --no-open";
+    "CONDUCTOR_PUBLIC_ORIGIN=" + window.location.origin + " pnpm serve";
+  const hint = $("connectionHint");
+  const code = (text) =>
+    Object.assign(document.createElement("code"), { textContent: text });
+  hint.replaceChildren(
+    document.createTextNode("Run it from your Conductor checkout. Once you have run "),
+    code("pnpm link --global"),
+    document.createTextNode(" there, "),
+    code("conductor serve --no-open"),
+    document.createTextNode(" works from any directory."),
+  );
+  hint.hidden = false;
 }
+
+$("copyCommand").onclick = async () => {
+  const button = $("copyCommand");
+  try {
+    await navigator.clipboard.writeText($("startCommand").textContent);
+    button.textContent = "Copied";
+    button.dataset.copied = "true";
+  } catch {
+    // Clipboard access can be refused; selecting the text still lets them copy.
+    getSelection()?.selectAllChildren($("startCommand"));
+    button.textContent = "Select and copy";
+  }
+  setTimeout(() => {
+    button.textContent = "Copy";
+    delete button.dataset.copied;
+  }, 2000);
+};
 
 function apiUrl(path) {
   return new URL(path, API_BASE || window.location.href).href;
@@ -39,7 +73,7 @@ function browserLoopbackFailureMessage() {
   if (/Safari\//.test(agent) && !/(Chrome|Chromium|CriOS)\//.test(agent)) {
     return "Safari blocked or could not reach the HTTPS → loopback connection. Use Chrome for the hosted console, or open http://127.0.0.1:4173 directly.";
   }
-  return "Conductor is not reachable on this machine. Start it with the command below, allow Chrome’s Local Network Access prompt if it appears, then try again.";
+  return "Conductor is not reachable on this machine. Start it with the command below and this page will connect on its own — no need to come back and click.";
 }
 
 function showConnectionState(state) {
@@ -85,9 +119,97 @@ async function loopbackPermissionStatus() {
   return null;
 }
 
+const RECONNECT_INTERVAL_MS = 2000;
+const RECONNECT_PROBE_TIMEOUT_MS = 1500;
+/* Bumping this cancels any watcher still in flight, so a manual retry and a
+   background watcher can never both drive the boot. */
+let reconnectGeneration = 0;
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/* Chrome throttles timers in a backgrounded tab to roughly once a minute, so a
+   watcher that merely skipped its turn while hidden would leave someone staring
+   at the failure card for up to a minute after switching back. Park instead,
+   and probe the instant the tab is looked at again. */
+function whenTabIsVisible() {
+  if (document.visibilityState === "visible") return Promise.resolve();
+  return new Promise((resolve) => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      resolve();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+  });
+}
+
+/* The failure card is nearly always shown to someone who is *about* to start
+   the engine in a terminal. Making them come back and click again is the whole
+   annoyance, so watch for the engine instead of waiting to be asked.
+
+   What this must not do is poll while Chrome's Local Network Access prompt is
+   open: that decision is a human one, and a probe fired underneath it aborts on
+   its own timeout and reports "unreachable" when the truth is "still waiting
+   for you" — the same false-offline bug the user-gesture connect above exists
+   to avoid. So the watcher runs only once permission is settled. */
+async function loopbackWatchIsSafe() {
+  const permission = await loopbackPermissionStatus();
+  // No permission API means this browser never prompts, so there is no pending
+  // human decision for a probe to race.
+  if (permission === null) return true;
+  return permission.state === "granted";
+}
+
+async function probeForSessionToken() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), RECONNECT_PROBE_TIMEOUT_MS);
+  try {
+    const response = await fetch(apiUrl("/api/session"), {
+      cache: "no-store",
+      signal: controller.signal,
+      targetAddressSpace: "loopback",
+    });
+    if (!response.ok) return null;
+    const body = await response.json();
+    return typeof body.token === "string" ? body.token : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function stopAutoReconnect() {
+  reconnectGeneration += 1;
+}
+
+function startAutoReconnect() {
+  reconnectGeneration += 1;
+  const generation = reconnectGeneration;
+
+  void (async () => {
+    while (generation === reconnectGeneration && !TOKEN) {
+      await delay(RECONNECT_INTERVAL_MS);
+      if (generation !== reconnectGeneration || TOKEN) return;
+      await whenTabIsVisible();
+      if (generation !== reconnectGeneration || TOKEN) return;
+      if (!(await loopbackWatchIsSafe())) continue;
+
+      const token = await probeForSessionToken();
+      if (generation !== reconnectGeneration || TOKEN) return;
+      if (token === null) continue;
+
+      TOKEN = token;
+      void start(true);
+      return;
+    }
+  })();
+}
+
 async function connectToLocalConductor() {
   if (TOKEN && TOKEN !== "__CONDUCTOR_SESSION_TOKEN__") return true;
 
+  stopAutoReconnect();
   showConnectionState("awaiting-permission");
   const controller = new AbortController();
   // Start fetch synchronously in the click handler, before the first await, so
@@ -138,6 +260,7 @@ async function connectToLocalConductor() {
   } catch (error) {
     console.warn("Conductor loopback probe failed:", error);
     showConnectionState("refused-unreachable");
+    startAutoReconnect();
     return false;
   } finally {
     if (timer !== null) clearTimeout(timer);
