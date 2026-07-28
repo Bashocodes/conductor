@@ -416,3 +416,66 @@ describe("es3Literal", () => {
     expect(() => es3Literal(Number.POSITIVE_INFINITY as unknown as JsonValue)).toThrow();
   });
 });
+
+describe("setKeyframes call splitting", () => {
+  function track(count: number): JsonValue {
+    const keyframes = [];
+    for (let i = 0; i < count; i += 1) {
+      keyframes.push({ time: i * 0.01, value: i % 2 === 0 ? 0 : 8 });
+    }
+    return keyframes as unknown as JsonValue;
+  }
+
+  const args = (count: number): Record<string, JsonValue> => ({
+    layerId: "27:Brightness & Contrast",
+    property: "Brightness",
+    timeMode: "seconds",
+    keyframes: track(count),
+    easing: { type: "cubic-bezier", profile: "controlled-peak", controlPoints: [0.25, 0.8, 0.75, 0.2] },
+    motionBlur: false,
+  });
+
+  it("leaves a short track as a single call", () => {
+    expect(adapter.mapCalls("setKeyframes", args(120))).toHaveLength(1);
+  });
+
+  /*
+   * After Effects writes a keyframe by walking the keys already on the
+   * property, so a long track costs quadratically: 3869 keys measured 10.1 s
+   * to write plus 5.9 s to ease, over the 20 s ceiling the bridge puts on one
+   * script. The limit is per call, so the work is split rather than capped —
+   * a beat-synced envelope legitimately wants a key on every beat.
+   */
+  it("splits a beat-length track so no single call approaches the host ceiling", () => {
+    const calls = adapter.mapCalls("setKeyframes", args(3869));
+    expect(calls.length).toBeGreaterThan(1);
+    for (const call of calls) {
+      expect(call.tool).toBe("execute_extend_script");
+      expect(call.operation).toBe("setKeyframes");
+    }
+  });
+
+  it("writes every keyframe exactly once, in order, across the calls", () => {
+    const total = 3869;
+    const calls = adapter.mapCalls("setKeyframes", args(total));
+    const times: number[] = [];
+    for (const call of calls) {
+      const source = call.args["script_string"] as string;
+      const match = /var rawTimes = \[(.*?)\];/s.exec(source);
+      expect(match).not.toBeNull();
+      const captured = (match as RegExpExecArray)[1] as string;
+      for (const piece of captured.split(",")) {
+        times.push(Number(piece));
+      }
+    }
+    expect(times).toHaveLength(total);
+    expect(times[0]).toBe(0);
+    expect(times[total - 1]).toBeCloseTo((total - 1) * 0.01, 6);
+    const ascending = times.every((value, index) => index === 0 || value > (times[index - 1] as number));
+    expect(ascending).toBe(true);
+  });
+
+  it("does not split operations whose cost does not scale with the material", () => {
+    expect(adapter.mapCalls("projectInfo", { action: "inspect" })).toHaveLength(1);
+  });
+});

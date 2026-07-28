@@ -4,6 +4,7 @@ import { performance } from "node:perf_hooks";
 import { ConductorMcpError } from "../mcp/errors.js";
 import type { McpClientProvider } from "../mcp/types.js";
 import type { JsonValue } from "../schema/recipe.js";
+import type { MappedToolCall } from "../adapters/adapter.js";
 import {
   AdapterRegistry,
   createDefaultAdapterRegistry,
@@ -173,16 +174,46 @@ export class RecipeEngine {
         let mappedArgs: Record<string, JsonValue> | undefined;
         try {
           contractArgs = interpolateArgs(step.args, context);
-          const mapped = adapter.mapCall(step.operation, contractArgs);
-          mappedTool = mapped.tool;
-          mappedArgs = mapped.args;
+          /* An adapter may answer with a sequence when one call could not
+             survive the host's per-call limit. The calls run in order and the
+             step still succeeds or fails as one unit; the last result stands
+             for the step, which is right for the operations that split — a
+             keyframe write reports the property's total key count, so the
+             final call already describes the whole track. */
+          const mappedCalls =
+            adapter.mapCalls === undefined
+              ? [adapter.mapCall(step.operation, contractArgs)]
+              : adapter.mapCalls(step.operation, contractArgs);
           const connection = await this.#clientProvider.get(step.server);
-          const rawResult = await withTimeout(
-            connection.callTool(mapped.tool, mapped.args, step.timeoutMs),
-            step.timeoutMs,
-            step.server,
-            mapped.tool,
-          );
+          let rawResult: unknown;
+          for (const mappedCall of mappedCalls) {
+            mappedTool = mappedCall.tool;
+            mappedArgs = mappedCall.args;
+            rawResult = await withTimeout(
+              connection.callTool(mappedCall.tool, mappedCall.args, step.timeoutMs),
+              step.timeoutMs,
+              step.server,
+              mappedCall.tool,
+            );
+            // A host that reported a script error must not receive the rest of
+            // the track on top of a half-written property.
+            const partial = findHostError(normalizeToolResult(rawResult));
+            if (partial !== undefined && mappedCalls.length > 1) {
+              throw new ConductorEngineError(
+                "STEP_FAILED",
+                `Step '${step.id}' reported success but ${step.server} raised: ${partial.message}`,
+                {
+                  details: {
+                    server: step.server,
+                    tool: mappedCall.tool,
+                    operation: step.operation,
+                    ...(partial.line === undefined ? {} : { line: partial.line }),
+                  },
+                },
+              );
+            }
+          }
+          const mapped = mappedCalls[mappedCalls.length - 1] as MappedToolCall;
           // Servers that answer with a JSON text block instead of
           // structuredContent get the same shape as everyone else, so recipes
           // stay portable across server implementations.
