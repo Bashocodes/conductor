@@ -52,6 +52,13 @@ Requirements:
 - An installed Adobe MCP server for `doctor` and real runs
 - No Adobe application for dry runs or tests
 
+If your Adobe MCP server is launched through `uv` with an unpinned
+`--with "mcp[cli]"`, pin it to `mcp[cli]<2`. The `mcp` 2.0.0 release removed
+`mcp.server.fastmcp`, so servers importing it — `adb-mcp` among them — die on
+startup with `ModuleNotFoundError` the first time a fresh environment resolves
+the new major. An already-running server keeps working, so this surfaces as a
+server that "suddenly" stops launching while a live session is still fine.
+
 Install and prepare a machine-local config:
 
 ```sh
