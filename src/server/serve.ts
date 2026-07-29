@@ -22,6 +22,11 @@ import { normalizeToolResult } from "../engine/normalizeResult.js";
 import { loadConductorConfig } from "../mcp/config.js";
 import { McpClientManager } from "../mcp/client.js";
 import {
+  FFMPEG_CANDIDATES,
+  FFPROBE_CANDIDATES,
+  findExecutable,
+} from "../media.js";
+import {
   CINEMATIC_LOOKS,
   DEFAULT_SAMPLE_LOGO,
 } from "../recipes/cinematic-look-lab.js";
@@ -294,25 +299,6 @@ const AERENDER_CANDIDATES = [
 
 async function findAerender(): Promise<string | undefined> {
   for (const candidate of AERENDER_CANDIDATES) {
-    if (await stat(candidate).then(() => true).catch(() => false)) return candidate;
-  }
-  return undefined;
-}
-
-const FFMPEG_CANDIDATES = [
-  "/opt/homebrew/bin/ffmpeg",
-  "/usr/local/bin/ffmpeg",
-  "/opt/local/bin/ffmpeg",
-];
-
-const FFPROBE_CANDIDATES = [
-  "/opt/homebrew/bin/ffprobe",
-  "/usr/local/bin/ffprobe",
-  "/opt/local/bin/ffprobe",
-];
-
-async function findExecutable(candidates: string[]): Promise<string | undefined> {
-  for (const candidate of candidates) {
     if (await stat(candidate).then(() => true).catch(() => false)) return candidate;
   }
   return undefined;
@@ -1255,6 +1241,9 @@ export async function startConductorServer(options: ServeOptions): Promise<{
         cutCount: prepared.params.planCutCount,
         estimatedBpm: prepared.params.planEstimatedBpm,
         durationSeconds: prepared.params.planDurationSeconds,
+        audioDurationSeconds: prepared.params.planAudioDurationSeconds,
+        mediaDurationSeconds: prepared.params.planMediaDurationSeconds,
+        durationLimit: prepared.params.planDurationLimit,
       });
       return;
     }

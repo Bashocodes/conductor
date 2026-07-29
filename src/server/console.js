@@ -8,6 +8,11 @@ const API_BASE = CONSOLE_CONFIG.apiBase || "";
 const HOSTED_CONSOLE = TOKEN === "";
 const UNREACHABLE_TIMEOUT_MS = 5000;
 
+// Keep the output-height contract in the behavior bundle too, so a cached
+// hosted document cannot regress into an endlessly growing page while the
+// independently fingerprinted console assets roll forward.
+$("out").classList.add("out-scroll");
+
 /* The hosted card used to print a bare `conductor serve`, which only resolves
    if you have already linked the binary globally. Nobody has on a first run, so
    the one instruction on the failure screen was itself unrunnable. Conductor
@@ -965,13 +970,40 @@ function renderBeatAnalysis() {
   }
   host.className = "beat-analysis ready";
   const bpm = Number(beatAnalysis.estimatedBpm);
+  const editDuration = Number(beatAnalysis.durationSeconds);
+  const audioDuration = Number(beatAnalysis.audioDurationSeconds);
+  const mediaDuration = Number(beatAnalysis.mediaDurationSeconds);
   host.appendChild(el("b", null,
     String(beatAnalysis.beatCount) + " beats · "
       + (bpm > 0 ? String(Math.round(bpm * 100) / 100) + " BPM" : "tempo unavailable")));
   host.appendChild(document.createTextNode(
     " · " + String(beatAnalysis.cutCount) + " planned cut"
       + (beatAnalysis.cutCount === 1 ? "" : "s")
-      + " · " + Number(beatAnalysis.durationSeconds).toFixed(2) + " s"));
+      + " · " + editDuration.toFixed(2) + " s edit"));
+  if (
+    Number.isFinite(audioDuration) &&
+    Number.isFinite(mediaDuration) &&
+    beatAnalysis.durationLimit === "media"
+  ) {
+    host.appendChild(el(
+      "div",
+      "beat-duration-note",
+      audioDuration.toFixed(2) + " s audio · using the first "
+        + editDuration.toFixed(2) + " s to match "
+        + mediaDuration.toFixed(2) + " s of selected media.",
+    ));
+  } else if (
+    Number.isFinite(audioDuration) &&
+    Number.isFinite(mediaDuration) &&
+    beatAnalysis.durationLimit === "audio"
+  ) {
+    host.appendChild(el(
+      "div",
+      "beat-duration-note",
+      mediaDuration.toFixed(2) + " s of selected media · edit ends with the "
+        + audioDuration.toFixed(2) + " s audio, so there is no silent tail.",
+    ));
+  }
 }
 
 function resetBeatAnalysis() {
@@ -1806,11 +1838,17 @@ async function startPrivacyClean() {
   }
 }
 
-function renderSteps(steps) {
-  const marks = { succeeded: ["✓", "s-ok"], failed: ["✕", "s-fail"], skipped: ["–", "s-skip"], running: ["●", "s-run"] };
+const STEP_MARKS = {
+  succeeded: ["✓", "s-ok"],
+  failed: ["✕", "s-fail"],
+  skipped: ["–", "s-skip"],
+  running: ["●", "s-run"],
+};
+
+function renderStepList(steps) {
   const list = el("ul", "steps");
   for (const step of steps) {
-    const [glyph, cls] = marks[step.status] || ["•", ""];
+    const [glyph, cls] = STEP_MARKS[step.status] || ["•", ""];
     const li = document.createElement("li");
     li.appendChild(el("span", "mark " + cls, glyph));
     const body = el("div");
@@ -1823,6 +1861,30 @@ function renderSteps(steps) {
     list.appendChild(li);
   }
   return list;
+}
+
+function renderSteps(steps) {
+  const succeeded = steps.filter((step) => step.status === "succeeded");
+  const visible = steps.filter((step) => step.status !== "succeeded");
+  const output = el("div", "step-output");
+
+  if (succeeded.length > 0) {
+    const details = el("details", "step-successes");
+    const summary = document.createElement("summary");
+    summary.appendChild(el("span", "mark s-ok", "✓"));
+    summary.appendChild(el(
+      "span",
+      "id",
+      succeeded.length + " step" + (succeeded.length === 1 ? "" : "s") + " succeeded",
+    ));
+    summary.appendChild(el("span", "step-expand-hint", "Show details"));
+    details.appendChild(summary);
+    details.appendChild(renderStepList(succeeded));
+    output.appendChild(details);
+  }
+
+  if (visible.length > 0) output.appendChild(renderStepList(visible));
+  return output;
 }
 
 const OUTPUT_FOLLOW_THRESHOLD = 32;
