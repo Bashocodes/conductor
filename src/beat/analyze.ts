@@ -1,15 +1,13 @@
 import { spawn } from "node:child_process";
-import { stat } from "node:fs/promises";
+
+import {
+  FFMPEG_CANDIDATES,
+  findExecutable,
+} from "../media.js";
 
 export const BEAT_SAMPLE_RATE = 22_050;
 export const BEAT_WINDOW_SIZE = 1_024;
 export const BEAT_HOP_SIZE = 512;
-
-const DEFAULT_FFMPEG_CANDIDATES = [
-  "/opt/homebrew/bin/ffmpeg",
-  "/usr/local/bin/ffmpeg",
-  "/opt/local/bin/ffmpeg",
-];
 
 export interface DetectedOnset {
   /** Sample-derived time. No elapsed clock or repeated floating-point addition. */
@@ -59,11 +57,8 @@ export function ffmpegPcmArgs(audioPath: string): string[] {
 }
 
 async function findFfmpeg(): Promise<string> {
-  for (const candidate of DEFAULT_FFMPEG_CANDIDATES) {
-    if (await stat(candidate).then(() => true).catch(() => false)) {
-      return candidate;
-    }
-  }
+  const executable = await findExecutable(FFMPEG_CANDIDATES);
+  if (executable !== undefined) return executable;
   throw new Error(
     "ffmpeg is required for beat analysis, but it was not found in a supported location.",
   );
