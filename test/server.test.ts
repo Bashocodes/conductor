@@ -113,6 +113,10 @@ describe("conductor ui server", () => {
     expect(script).toContain('"Ordinary-beat Directional Blur"');
     expect(script).toContain('"Tempo octave"');
     expect(script).toContain('"Phase nudge"');
+    expect(script).toContain('"Treatment picker"');
+    expect(script).toContain('"Creative treatment"');
+    expect(script).toContain('" participating beats"');
+    expect(script).toContain('" (~"');
     expect(script).toContain('" · " + confidenceLevel + " confidence"');
     expect(script).toContain('"First downbeat "');
     expect(script).not.toMatch(
@@ -419,6 +423,10 @@ describe("conductor ui server", () => {
     });
     expect(beatSync?.params.brandPulse?.default).toBe(false);
     expect(beatSync?.params.pixelSort?.default).toBe(true);
+    expect(beatSync?.params.treatment).toMatchObject({
+      default: "classic",
+      values: ["classic", "solar", "velocity", "signal"],
+    });
     expect(beatSync?.params.tempoOctave).toMatchObject({
       default: "detected",
       values: ["half", "detected", "double"],

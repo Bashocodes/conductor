@@ -1273,6 +1273,13 @@ export async function startConductorServer(options: ServeOptions): Promise<{
         firstDownbeatSeconds: prepared.params.planFirstDownbeatSeconds,
         tempoOctave: prepared.params.tempoOctave,
         phaseNudge: prepared.params.phaseNudge,
+        treatment: prepared.params.treatment,
+        barCount: prepared.params.planBarCount,
+        effectiveDensity: prepared.params.planEffectiveDensity,
+        participatingBeatCount: prepared.params.planParticipatingBeatCount,
+        treatmentKeyCount: prepared.params.planTreatmentKeyCount,
+        treatmentEasingSeconds:
+          prepared.params.planTreatmentEasingSeconds,
         tempoConfidence: prepared.params.planTempoConfidence,
         durationSeconds: prepared.params.planDurationSeconds,
         audioDurationSeconds: prepared.params.planAudioDurationSeconds,
