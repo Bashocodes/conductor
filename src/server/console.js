@@ -1185,6 +1185,7 @@ function beatSyncFingerprint(params) {
   return JSON.stringify({
     audio: params.audio || "",
     media: params.media || [],
+    treatment: params.treatment,
     density: params.density,
     tempoOctave: params.tempoOctave,
     phaseNudge: params.phaseNudge,
@@ -1251,6 +1252,17 @@ function renderBeatAnalysis() {
       + (Number.isFinite(firstDownbeat) ? firstDownbeat.toFixed(3) + " s" : "unavailable")
       + " · tempo " + String(beatAnalysis.tempoOctave || "detected")
       + " · phase " + Number(beatAnalysis.phaseNudge || 0).toFixed(2) + " beat",
+  ));
+  host.appendChild(el(
+    "div",
+    "beat-grid-readout",
+    Number(beatAnalysis.barCount || 0).toFixed(2) + " bars"
+      + " · " + String(beatAnalysis.participatingBeatCount || 0)
+      + " participating beats"
+      + " · effective " + String(beatAnalysis.effectiveDensity || "impact")
+      + " · " + String(beatAnalysis.treatmentKeyCount || 0) + " keys"
+      + " (~" + Number(beatAnalysis.treatmentEasingSeconds || 0).toFixed(3)
+      + " s easing)",
   ));
   if (confidence && typeof confidence.summary === "string") {
     host.appendChild(el(
@@ -1419,10 +1431,33 @@ function renderBeatSyncParams() {
   media.body.appendChild(list);
   renderBeatMediaList();
 
+  const treatment = appendSection(
+    host,
+    "Treatment picker",
+    "Classic remains the default. Solar, Velocity, and Signal are deliberately different comparison treatments; choosing one does not redefine Classic.",
+  );
+  appendSegmented(
+    treatment.body,
+    "treatment",
+    defs.treatment.values,
+    defs.treatment.default,
+    {
+      label: "Creative treatment",
+      short: (value) => ({
+        classic: "Classic",
+        solar: "Solar Ascension",
+        velocity: "Velocity Arc",
+        signal: "Signal Break",
+      })[value] || value,
+      hint: defs.treatment.description,
+      onChange: resetBeatAnalysis,
+    },
+  );
+
   const edit = appendSection(
     host,
     "Tier-routed vocabulary",
-    "Restrained blooms downbeats. Active adds primary-only Pixel Sort. Impact also gives ordinary beats a two-frame Directional Blur. The three effects never fire on the same grid event.",
+    "Classic uses these individual family switches. Creative treatments use their complete authored stacks. Under four bars, participation automatically expands to every beat.",
   );
   appendSegmented(edit.body, "density", defs.density.values, defs.density.default, {
     hint: defs.density.description,

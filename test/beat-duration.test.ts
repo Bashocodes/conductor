@@ -54,6 +54,7 @@ function analysisFor(
 const params = {
   audio: "/media/score.mp3",
   media: ["/media/short.mov"],
+  treatment: "classic",
   density: "active",
   tempoOctave: "detected",
   phaseNudge: 0,
@@ -91,6 +92,20 @@ describe("Beat Sync media-governed duration", () => {
       "planGlowKeyframes",
       "planPixelSortKeyframes",
       "planDirectionalBlurKeyframes",
+      "planSolarExposureKeyframes",
+      "planSolarGlowKeyframes",
+      "planSolarBurstKeyframes",
+      "planSolarScaleKeyframes",
+      "planVelocityRadialBlurKeyframes",
+      "planVelocityDirectionalBlurKeyframes",
+      "planVelocityScaleKeyframes",
+      "planVelocityPositionKeyframes",
+      "planSignalPixelSortKeyframes",
+      "planSignalPhaseKeyframes",
+      "planSignalRedExposureKeyframes",
+      "planSignalBlueExposureKeyframes",
+      "planSignalScaleKeyframes",
+      "planSignalRotationKeyframes",
       "planBrandKeyframes",
     ]) {
       const keyframes = prepared.params[name] as Array<{ time: number }>;
