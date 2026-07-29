@@ -14,8 +14,9 @@ export interface BeatSyncStudioParams {
   audio: string;
   media: string[];
   density: "restrained" | "active" | "impact";
+  tempoOctave: "half" | "detected" | "double";
+  phaseNudge: number;
   cuts: boolean;
-  transitions: boolean;
   light: boolean;
   camera: boolean;
   pixelSort: boolean;
@@ -45,15 +46,15 @@ export interface PreparedBeatSyncPlan {
   mediaDurationSeconds: number;
   durationLimit: "audio" | "media";
   estimatedBpm: number | null;
+  firstDownbeatSeconds: number | null;
   tempoConfidence: BeatTempoConfidence;
   beatCount: number;
   cutCount: number;
   markers: BeatSyncMarker[];
   mediaSegments: BeatSyncMediaSegment[];
-  cameraKeyframes: Array<{ time: number; value: JsonValue }>;
-  lightKeyframes: Array<{ time: number; value: JsonValue }>;
-  transitionKeyframes: Array<{ time: number; value: JsonValue }>;
+  glowKeyframes: Array<{ time: number; value: JsonValue }>;
   pixelSortKeyframes: Array<{ time: number; value: JsonValue }>;
+  directionalBlurKeyframes: Array<{ time: number; value: JsonValue }>;
   brandKeyframes: Array<{ time: number; value: JsonValue }>;
 }
 
@@ -99,122 +100,137 @@ function nearestOnset(
   return nearest;
 }
 
-function pulseKeyframes(
-  events: BeatSyncEvent[],
-  target: BeatSyncEvent["targets"][number],
-  frameRate: number,
-  durationSeconds: number,
-  baseValue: JsonValue,
-  peakValue: (event: BeatSyncEvent) => JsonValue,
-  onlyNonCuts: boolean,
-  releaseFrames = 2,
-): Array<{ time: number; value: JsonValue }> {
-  const finalFrame = Math.max(1, Math.round(durationSeconds * frameRate));
-  const values = new Map<number, JsonValue>([
-    [0, baseValue],
-    [finalFrame, baseValue],
-  ]);
-  for (const event of events) {
-    if (
-      !event.targets.includes(target) ||
-      (onlyNonCuts && event.targets.includes("cut"))
-    ) {
-      continue;
-    }
-    values.set(Math.max(0, event.frame - 1), baseValue);
-    values.set(event.frame, peakValue(event));
-    values.set(
-      Math.min(finalFrame, event.frame + releaseFrames),
-      baseValue,
-    );
-  }
-  return [...values.entries()]
-    .sort(([left], [right]) => left - right)
-    .map(([frame, value]) => ({ time: frame / frameRate, value }));
-}
-
 function roundedTime(value: number): number {
   return Math.round(value * 1_000_000_000) / 1_000_000_000;
 }
 
 /**
- * Converts the detector's raw spectral-flux strengths to the native effect's
- * 0–100 percentage contract. The intermediate `normalizedStrength` is the
- * requested 0–1 analysis envelope; the existing beat importance hierarchy
- * then gives ordinary beats a restrained range and strong tiers larger bursts.
+ * Builds one three-key accent around every routed event.
  *
- * Unlike cut boundaries, these keys retain the detector's sample-derived
- * times. AE evaluates the continuous curve at render time, so the sub-hop
- * position changes the curve even though visual frames remain frame sampled.
+ * The peak keeps the nearest sample-derived onset whenever it remains close
+ * enough to the musical grid. Attack and release are expressed in delivered
+ * frames so the approved two/three-frame vocabulary is stable at every frame
+ * rate. Quiet beats retain their grid time.
  */
-function pixelSortEnvelopeKeyframes(
+function effectPulseKeyframes(
   analysis: BeatAnalysis,
   events: BeatSyncEvent[],
+  target: BeatSyncEvent["targets"][number],
+  frameRate: number,
   durationSeconds: number,
+  baseValue: JsonValue,
+  peakValue: JsonValue,
+  releaseFrames = 2,
 ): Array<{ time: number; value: JsonValue }> {
-  // The event list is the output of buildBeatSyncEvents(), so pixel sorting
-  // consumes the same importance classification as cuts and smaller accents.
-  // Only the key time and raw strength come back from the unquantized onset.
-  const samples = events.flatMap((event) => {
-    const onset = nearestOnset(analysis, event);
-    return onset === undefined
-      ? []
-      : [{
-          timeSeconds: onset.timeSeconds,
-          strength: onset.strength,
-          importance: event.importance,
-        }];
-  });
-  const maximumStrength = samples.reduce(
-    (maximum, sample) => Math.max(maximum, sample.strength),
-    0,
-  );
-  const values = new Map<number, number>([
-    [0, 0],
-    [roundedTime(durationSeconds), 0],
+  const frameDuration = 1 / frameRate;
+  const values = new Map<number, JsonValue>([
+    [0, baseValue],
+    [roundedTime(durationSeconds), baseValue],
   ]);
-  const setMaximum = (time: number, value: number) => {
-    const boundedTime = roundedTime(
-      Math.max(0, Math.min(durationSeconds, time)),
+  for (const event of events) {
+    if (!event.targets.includes(target)) continue;
+    const peakTime = Math.max(
+      0,
+      Math.min(durationSeconds, nearestOnsetTime(analysis, event)),
     );
-    values.set(boundedTime, Math.max(values.get(boundedTime) ?? 0, value));
-  };
-
-  for (let index = 0; index < samples.length; index += 1) {
-    const sample = samples[index]!;
-    if (sample.timeSeconds > durationSeconds) continue;
-    const normalizedStrength =
-      maximumStrength <= Number.EPSILON
-        ? 0
-        : Math.max(0, Math.min(1, sample.strength / maximumStrength));
-    const beatAmount =
-      sample.importance === "downbeat"
-        ? 58 + normalizedStrength * 42
-        : sample.importance === "primary"
-          ? 32 + normalizedStrength * 28
-          : 12 + normalizedStrength * 18;
-    const previousTime = samples[index - 1]?.timeSeconds ?? 0;
-    const nextTime =
-      samples[index + 1]?.timeSeconds ?? durationSeconds;
-    const attackSeconds = Math.min(
-      0.045,
-      Math.max(0.005, (sample.timeSeconds - previousTime) * 0.35),
+    values.set(
+      roundedTime(Math.max(0, peakTime - frameDuration)),
+      baseValue,
     );
-    const releaseSeconds = Math.min(
-      0.18,
-      Math.max(0.02, (nextTime - sample.timeSeconds) * 0.55),
-    );
-    setMaximum(sample.timeSeconds - attackSeconds, 0);
-    setMaximum(sample.timeSeconds, beatAmount);
-    setMaximum(sample.timeSeconds + releaseSeconds, 0);
+    values.set(roundedTime(peakTime), peakValue);
+    values.set(roundedTime(
+      Math.min(durationSeconds, peakTime + releaseFrames * frameDuration),
+    ), baseValue);
   }
-
   return [...values.entries()]
     .sort(([left], [right]) => left - right)
-    .map(([time, value]) => ({
-      time,
-      value: Math.round(value * 1_000_000) / 1_000_000,
-    }));
+    .map(([time, value]) => ({ time, value }));
+}
+
+/**
+ * Manual overrides are intentionally small and structural: choose the tempo
+ * octave and move the complete grid by a fraction of that beat. The detector's
+ * default arrays remain byte-for-byte authoritative when both controls are at
+ * their defaults; an override regenerates a regular grid from the detected
+ * downbeat anchor so snapping cannot silently undo a person's phase nudge.
+ */
+function overriddenBeatGrid(
+  analysis: BeatAnalysis,
+  params: Pick<BeatSyncStudioParams, "tempoOctave" | "phaseNudge">,
+): {
+  beatTimesSeconds: number[];
+  primaryBeatTimesSeconds: number[];
+  downbeatTimesSeconds: number[];
+  estimatedBpm: number | null;
+} {
+  if (
+    !Number.isFinite(params.phaseNudge) ||
+    params.phaseNudge < -0.5 ||
+    params.phaseNudge > 0.5
+  ) {
+    throw new Error("phaseNudge must be a finite fraction from -0.5 to 0.5.");
+  }
+  if (
+    params.tempoOctave === "detected" &&
+    Math.abs(params.phaseNudge) <= Number.EPSILON
+  ) {
+    return {
+      beatTimesSeconds: analysis.beatTimesSeconds,
+      primaryBeatTimesSeconds: analysis.primaryBeatTimesSeconds,
+      downbeatTimesSeconds: analysis.downbeatTimesSeconds,
+      estimatedBpm: analysis.estimatedBpm,
+    };
+  }
+
+  const basePeriod = analysis.beatPeriodSeconds;
+  const detectedBpm = analysis.estimatedBpm;
+  const baseDownbeat =
+    analysis.downbeatTimesSeconds[0] ?? analysis.beatPhaseSeconds;
+  if (
+    basePeriod === null ||
+    baseDownbeat === null ||
+    detectedBpm === null
+  ) {
+    throw new Error(
+      "Tempo octave and phase overrides require an available detected tempo grid.",
+    );
+  }
+  const periodMultiplier =
+    params.tempoOctave === "half"
+      ? 2
+      : params.tempoOctave === "double"
+        ? 0.5
+        : 1;
+  const period = basePeriod * periodMultiplier;
+  const estimatedBpm = detectedBpm / periodMultiplier;
+  const anchor = baseDownbeat + params.phaseNudge * period;
+  const firstIndex = Math.ceil(-anchor / period);
+  const lastIndex = Math.floor(
+    (analysis.durationSeconds - anchor) / period,
+  );
+  const beatTimesSeconds: number[] = [];
+  const primaryBeatTimesSeconds: number[] = [];
+  const downbeatTimesSeconds: number[] = [];
+  const positiveModulo = (value: number, divisor: number) =>
+    ((value % divisor) + divisor) % divisor;
+
+  for (let index = firstIndex; index <= lastIndex; index += 1) {
+    const time = roundedTime(anchor + index * period);
+    if (time < 0 || time > analysis.durationSeconds) continue;
+    beatTimesSeconds.push(time);
+    if (positiveModulo(index, 2) === 0) {
+      primaryBeatTimesSeconds.push(time);
+    }
+    if (positiveModulo(index, 4) === 0) {
+      downbeatTimesSeconds.push(time);
+    }
+  }
+  return {
+    beatTimesSeconds,
+    primaryBeatTimesSeconds,
+    downbeatTimesSeconds,
+    estimatedBpm,
+  };
 }
 
 function enabledFamilies(
@@ -225,46 +241,11 @@ function enabledFamilies(
   // creates an invisible layer boundary, not a visual cut. Only a media bin
   // can author cut evidence that the rendered-video detector can observe.
   if (params.cuts && params.media.length > 1) families.push("cuts");
-  if (params.transitions) families.push("transitions");
-  if (params.light) families.push("light");
-  if (params.camera) families.push("camera");
+  if (params.light) families.push("glow");
+  if (params.pixelSort) families.push("pixel-sort");
+  if (params.camera) families.push("directional-blur");
   if (params.brandPulse) families.push("brand-pulse");
   return families;
-}
-
-function cameraPeak(
-  params: BeatSyncStudioParams,
-  event: BeatSyncEvent,
-): JsonValue {
-  const scale =
-    params.density === "restrained"
-      ? 101.5
-      : params.density === "active"
-        ? event.importance === "downbeat" ? 102.2 : 101.4
-        : event.importance === "downbeat"
-          ? 103.2
-          : event.importance === "primary"
-            ? 102.2
-            : 101.2;
-  return [scale, scale];
-}
-
-function contrastPeak(
-  params: BeatSyncStudioParams,
-  event: BeatSyncEvent,
-): JsonValue {
-  if (params.density === "restrained") return 4;
-  if (params.density === "active") return 8;
-  return event.importance === "downbeat" ? 14 : 8;
-}
-
-function exposurePeak(
-  params: BeatSyncStudioParams,
-  event: BeatSyncEvent,
-): JsonValue {
-  if (params.density === "restrained") return 0.06;
-  if (params.density === "active") return 0.1;
-  return event.importance === "downbeat" ? 0.18 : 0.1;
 }
 
 function buildMediaSegments(
@@ -389,10 +370,11 @@ export function buildBeatSyncStudioPlan(
   const durationSeconds =
     Math.max(1, Math.floor(unquantizedDurationSeconds * params.frameRate)) /
     params.frameRate;
+  const adjustedGrid = overriddenBeatGrid(analysis, params);
   const beats = buildQuantizedBeatMap({
-    beatTimesSeconds: analysis.beatTimesSeconds,
-    primaryBeatTimesSeconds: analysis.primaryBeatTimesSeconds,
-    downbeatTimesSeconds: analysis.downbeatTimesSeconds,
+    beatTimesSeconds: adjustedGrid.beatTimesSeconds,
+    primaryBeatTimesSeconds: adjustedGrid.primaryBeatTimesSeconds,
+    downbeatTimesSeconds: adjustedGrid.downbeatTimesSeconds,
     frameRate: params.frameRate,
   }).filter((beat) => beat.timeSeconds < durationSeconds);
   const events = buildBeatSyncEvents(beats, {
@@ -433,55 +415,52 @@ export function buildBeatSyncStudioPlan(
     audioDurationSeconds: analysis.durationSeconds,
     mediaDurationSeconds: durationBudget.mediaDurationSeconds,
     durationLimit,
-    estimatedBpm: analysis.estimatedBpm,
+    estimatedBpm: adjustedGrid.estimatedBpm,
+    firstDownbeatSeconds:
+      beats.find((beat) => beat.importance === "downbeat")?.timeSeconds ?? null,
     tempoConfidence: analysis.tempoConfidence,
     beatCount: beats.length,
     cutCount: cuts.length,
     markers,
     mediaSegments,
-    cameraKeyframes: pulseKeyframes(
-      events,
-      "camera-impact",
-      params.frameRate,
-      durationSeconds,
-      [100, 100],
-      (event) => cameraPeak(params, event),
-      true,
-      3,
-    ),
-    lightKeyframes: pulseKeyframes(
-      events,
-      "light-accent",
-      params.frameRate,
-      durationSeconds,
-      0,
-      (event) => contrastPeak(params, event),
-      true,
-      2,
-    ),
-    transitionKeyframes: pulseKeyframes(
-      events,
-      "transition-apex",
-      params.frameRate,
-      durationSeconds,
-      0,
-      (event) => exposurePeak(params, event),
-      false,
-      3,
-    ),
-    pixelSortKeyframes: pixelSortEnvelopeKeyframes(
+    glowKeyframes: effectPulseKeyframes(
       analysis,
       events,
+      "glow-accent",
+      params.frameRate,
       durationSeconds,
+      0,
+      0.25,
+      3,
     ),
-    brandKeyframes: pulseKeyframes(
+    pixelSortKeyframes: effectPulseKeyframes(
+      analysis,
+      events,
+      "pixel-sort-accent",
+      params.frameRate,
+      durationSeconds,
+      0,
+      40,
+      2,
+    ),
+    directionalBlurKeyframes: effectPulseKeyframes(
+      analysis,
+      events,
+      "directional-blur-accent",
+      params.frameRate,
+      durationSeconds,
+      0,
+      5,
+      2,
+    ),
+    brandKeyframes: effectPulseKeyframes(
+      analysis,
       events,
       "brand-pulse",
       params.frameRate,
       durationSeconds,
       10,
-      (event) => event.importance === "downbeat" ? 26 : 20,
-      false,
+      20,
       2,
     ),
   };
@@ -498,15 +477,15 @@ export function withBeatSyncPlanParams(
     planMediaDurationSeconds: plan.mediaDurationSeconds,
     planDurationLimit: plan.durationLimit,
     planEstimatedBpm: plan.estimatedBpm ?? 0,
+    planFirstDownbeatSeconds: plan.firstDownbeatSeconds ?? 0,
     planTempoConfidence: plan.tempoConfidence,
     planBeatCount: plan.beatCount,
     planCutCount: plan.cutCount,
     planMarkers: plan.markers,
     planMediaSegments: plan.mediaSegments,
-    planCameraKeyframes: plan.cameraKeyframes,
-    planLightKeyframes: plan.lightKeyframes,
-    planTransitionKeyframes: plan.transitionKeyframes,
+    planGlowKeyframes: plan.glowKeyframes,
     planPixelSortKeyframes: plan.pixelSortKeyframes,
+    planDirectionalBlurKeyframes: plan.directionalBlurKeyframes,
     planBrandKeyframes: plan.brandKeyframes,
   };
 }

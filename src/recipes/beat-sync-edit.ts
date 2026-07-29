@@ -6,10 +6,6 @@ const mediaLayer =
   "${steps.place-beat-sync-media.result.structuredContent.layerId}";
 const duration = "${params.planDurationSeconds}";
 
-const baselineScale = [
-  { time: 0, value: [100, 100] },
-  { time: 0.1, value: [100, 100] },
-];
 const baselineValue = [
   { time: 0, value: 0 },
   { time: 0.1, value: 0 },
@@ -19,7 +15,7 @@ export const beatSyncEditRecipe = recipeSchema.parse({
   id: "beat-sync-edit",
   title: "Beat Sync Studio",
   description:
-    "Analyzes an audio track, writes the complete beat map as editable After Effects markers, builds a frame-locked media edit with optional native beat-driven pixel sorting, and verifies every rendered cut against its intended onset.",
+    "Builds a measured tempo-grid edit with tier-exclusive Glow, Pixel Sort, and Directional Blur accents, editable After Effects markers, and verified HLG delivery.",
   targetServers: ["aftereffects"],
   params: {
     audio: {
@@ -37,35 +33,48 @@ export const beatSyncEditRecipe = recipeSchema.parse({
     },
     density: {
       type: "enum",
-      description: "Which beat-importance tiers receive cuts and accents.",
+      description:
+        "Restrained uses downbeats, active adds primary beats, and impact adds ordinary beats.",
       values: ["restrained", "active", "impact"],
       default: "active",
+    },
+    tempoOctave: {
+      type: "enum",
+      description:
+        "Manual tempo correction: half, detected, or double the measured BPM.",
+      values: ["half", "detected", "double"],
+      default: "detected",
+    },
+    phaseNudge: {
+      type: "number",
+      description:
+        "Shift the complete grid by a fraction of one resulting beat.",
+      default: 0,
+      min: -0.5,
+      max: 0.5,
     },
     cuts: {
       type: "boolean",
       description: "Allow cuts on the selected primary/downbeat tier.",
       default: true,
     },
-    transitions: {
-      type: "boolean",
-      description: "Allow transition apexes on strong beats.",
-      default: true,
-    },
     light: {
       type: "boolean",
-      description: "Allow small light accents on non-cut beats.",
+      description:
+        "Bloom only bar downbeats with the approved three-frame Glow accent.",
       default: true,
     },
     camera: {
       type: "boolean",
-      description: "Allow small camera impacts on non-cut beats.",
+      description:
+        "Apply the approved two-frame Directional Blur only to ordinary beats in Impact.",
       default: true,
     },
     pixelSort: {
       type: "boolean",
       description:
-        "Drive the native Director Pixel Sort Beat Amount curve from analyzed onset strength.",
-      default: false,
+        "Apply Director Pixel Sort at Beat Amount 40 only to primary beats.",
+      default: true,
     },
     brandPulse: {
       type: "boolean",
@@ -121,7 +130,14 @@ export const beatSyncEditRecipe = recipeSchema.parse({
     },
     planEstimatedBpm: {
       type: "number",
-      description: "Internal: estimated tempo shown before render.",
+      description: "Internal: resulting detected or manually overridden tempo.",
+      internal: true,
+      default: 0,
+      min: 0,
+    },
+    planFirstDownbeatSeconds: {
+      type: "number",
+      description: "Internal: first resulting downbeat shown before render.",
       internal: true,
       default: 0,
       min: 0,
@@ -168,28 +184,23 @@ export const beatSyncEditRecipe = recipeSchema.parse({
       internal: true,
       default: [],
     },
-    planCameraKeyframes: {
+    planGlowKeyframes: {
       type: "json",
-      description: "Internal: non-cut camera accents.",
-      internal: true,
-      default: baselineScale,
-    },
-    planLightKeyframes: {
-      type: "json",
-      description: "Internal: non-cut light accents.",
-      internal: true,
-      default: baselineValue,
-    },
-    planTransitionKeyframes: {
-      type: "json",
-      description: "Internal: transition apex accents.",
+      description: "Internal: downbeat-only Glow Intensity accents.",
       internal: true,
       default: baselineValue,
     },
     planPixelSortKeyframes: {
       type: "json",
       description:
-        "Internal: continuous native Pixel Sort Beat Amount envelope.",
+        "Internal: primary-only native Pixel Sort Beat Amount accents.",
+      internal: true,
+      default: baselineValue,
+    },
+    planDirectionalBlurKeyframes: {
+      type: "json",
+      description:
+        "Internal: ordinary-beat Directional Blur Length accents.",
       internal: true,
       default: baselineValue,
     },
@@ -434,20 +445,20 @@ export const beatSyncEditRecipe = recipeSchema.parse({
         },
       },
       note:
-        "Key times retain the sample-derived onset positions; cuts remain independently quantized to edit frames.",
+        "Primary-only peaks retain nearby sample-derived onset positions, use the approved Beat Amount 40, and release over two delivered frames.",
     },
     {
-      id: "add-beat-sync-light",
+      id: "add-beat-sync-glow",
       server: "aftereffects",
       operation: "applyEffect",
       precondition: "${params.light}",
       args: {
         targetId: mediaLayer,
-        effect: "Brightness & Contrast",
+        effect: "ADBE Glo2",
         settings: {
-          Brightness: 0,
-          Contrast: 0,
-          "Use Legacy (supports HDR)": 1,
+          "Glow Threshold": 235,
+          "Glow Radius": 30,
+          "Glow Intensity": 0,
         },
         atTimeSeconds: 0,
         durationSeconds: duration,
@@ -468,16 +479,16 @@ export const beatSyncEditRecipe = recipeSchema.parse({
       },
     },
     {
-      id: "keyframe-beat-sync-light",
+      id: "keyframe-beat-sync-glow",
       server: "aftereffects",
       operation: "setKeyframes",
       precondition: "${params.light}",
       args: {
         layerId:
-          "${steps.add-beat-sync-light.result.structuredContent.effectId}",
-        property: "Contrast",
+          "${steps.add-beat-sync-glow.result.structuredContent.effectId}",
+        property: "Glow Intensity",
         timeMode: "seconds",
-        keyframes: "${params.planLightKeyframes}",
+        keyframes: "${params.planGlowKeyframes}",
         easing: {
           type: "cubic-bezier",
           profile: "controlled-peak",
@@ -497,20 +508,19 @@ export const beatSyncEditRecipe = recipeSchema.parse({
         },
       },
       note:
-        "Shapes contrast on structural beats instead of flashing flat white brightness on every detected onset.",
+        "The atelier soft_glow vocabulary fires only on downbeats at intensity 0.25 and releases over three delivered frames.",
     },
     {
-      id: "add-beat-sync-transition",
+      id: "add-beat-sync-directional-blur",
       server: "aftereffects",
       operation: "applyEffect",
-      precondition: "${params.transitions}",
+      precondition: "${params.camera}",
       args: {
         targetId: mediaLayer,
-        effect: "Exposure",
+        effect: "ADBE Motion Blur",
         settings: {
-          Exposure: 0,
-          Offset: 0,
-          "Gamma Correction": 1,
+          Direction: 90,
+          "Blur Length": 0,
         },
         atTimeSeconds: 0,
         durationSeconds: duration,
@@ -523,7 +533,7 @@ export const beatSyncEditRecipe = recipeSchema.parse({
             type: "object",
             required: ["effectId", "appliedParameterCount", "refusedParameters"],
             properties: {
-              appliedParameterCount: { type: "number", equals: 3 },
+              appliedParameterCount: { type: "number", equals: 2 },
               refusedParameters: { type: "array", equals: [] },
             },
           },
@@ -531,16 +541,16 @@ export const beatSyncEditRecipe = recipeSchema.parse({
       },
     },
     {
-      id: "keyframe-beat-sync-transition",
+      id: "keyframe-beat-sync-directional-blur",
       server: "aftereffects",
       operation: "setKeyframes",
-      precondition: "${params.transitions}",
+      precondition: "${params.camera}",
       args: {
         layerId:
-          "${steps.add-beat-sync-transition.result.structuredContent.effectId}",
-        property: "Exposure",
+          "${steps.add-beat-sync-directional-blur.result.structuredContent.effectId}",
+        property: "Blur Length",
         timeMode: "seconds",
-        keyframes: "${params.planTransitionKeyframes}",
+        keyframes: "${params.planDirectionalBlurKeyframes}",
         easing: {
           type: "cubic-bezier",
           profile: "controlled-peak",
@@ -559,35 +569,8 @@ export const beatSyncEditRecipe = recipeSchema.parse({
           },
         },
       },
-    },
-    {
-      id: "keyframe-beat-sync-camera",
-      server: "aftereffects",
-      operation: "setKeyframes",
-      precondition: "${params.camera}",
-      args: {
-        layerId: mediaLayer,
-        property: "scale",
-        timeMode: "seconds",
-        keyframes: "${params.planCameraKeyframes}",
-        easing: {
-          type: "cubic-bezier",
-          profile: "controlled-peak",
-          controlPoints: [0.2, 0.9, 0.8, 0.1],
-        },
-        motionBlur: true,
-      },
-      verify: {
-        type: "object",
-        required: ["structuredContent"],
-        properties: {
-          structuredContent: {
-            type: "object",
-            required: ["applied", "keyCount"],
-            properties: { applied: { type: "boolean", equals: true } },
-          },
-        },
-      },
+      note:
+        "The atelier motion_blur_dir vocabulary fires only on ordinary Impact beats at 5 px, follows vertical travel at 90 degrees, and releases over two delivered frames.",
     },
     {
       id: "add-beat-sync-brand",

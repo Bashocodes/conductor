@@ -32,20 +32,24 @@ describe("beat-sync planning foundation", () => {
     ]);
   });
 
-  it("maps strong beats to cuts and transition peaks", () => {
+  it("routes each importance tier to one exclusive effect family", () => {
     const events = buildBeatSyncEvents(
       [
         { frame: 12, timeSeconds: 0.5, importance: "beat" },
+        { frame: 18, timeSeconds: 0.75, importance: "primary" },
         { frame: 24, timeSeconds: 1, importance: "downbeat" },
       ],
       { brandPulse: true },
     );
-    expect(events[0]?.targets).toEqual(["camera-impact"]);
+    expect(events[0]?.targets).toEqual(["directional-blur-accent"]);
     expect(events[1]?.targets).toEqual([
       "cut",
-      "transition-apex",
-      "light-accent",
-      "camera-impact",
+      "pixel-sort-accent",
+      "brand-pulse",
+    ]);
+    expect(events[2]?.targets).toEqual([
+      "cut",
+      "glow-accent",
       "brand-pulse",
     ]);
   });
@@ -58,32 +62,32 @@ describe("beat-sync planning foundation", () => {
     ];
     const restrained = buildBeatSyncEvents(beats, {
       density: "restrained",
-      allowedEventFamilies: ["cuts", "light"],
+      allowedEventFamilies: ["cuts", "glow"],
     });
     expect(restrained.map((event) => event.targets)).toEqual([
       [],
       [],
-      ["cut", "light-accent"],
+      ["cut", "glow-accent"],
     ]);
 
     const active = buildBeatSyncEvents(beats, {
       density: "active",
-      allowedEventFamilies: ["cuts", "camera"],
+      allowedEventFamilies: ["cuts", "pixel-sort", "directional-blur"],
     });
     expect(active.map((event) => event.targets)).toEqual([
       [],
-      ["cut", "camera-impact"],
-      ["cut", "camera-impact"],
+      ["cut", "pixel-sort-accent"],
+      ["cut"],
     ]);
 
     const impact = buildBeatSyncEvents(beats, {
       density: "impact",
-      allowedEventFamilies: ["light", "camera"],
+      allowedEventFamilies: ["glow", "pixel-sort", "directional-blur"],
     });
     expect(impact.map((event) => event.targets)).toEqual([
-      ["camera-impact"],
-      ["light-accent", "camera-impact"],
-      ["light-accent", "camera-impact"],
+      ["directional-blur-accent"],
+      ["pixel-sort-accent"],
+      ["glow-accent"],
     ]);
   });
 

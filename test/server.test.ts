@@ -108,6 +108,13 @@ describe("conductor ui server", () => {
     expect(script).toContain('"conductor.params." + recipeId');
     expect(script).toContain("Clear saved settings");
     expect(script).toContain("Restored beat map is stale.");
+    expect(script).toContain('"Downbeat Glow"');
+    expect(script).toContain('"Primary Pixel Sort"');
+    expect(script).toContain('"Ordinary-beat Directional Blur"');
+    expect(script).toContain('"Tempo octave"');
+    expect(script).toContain('"Phase nudge"');
+    expect(script).toContain('" · " + confidenceLevel + " confidence"');
+    expect(script).toContain('"First downbeat "');
     expect(script).not.toMatch(
       /localStorage\.setItem\([^)]*(?:TOKEN|sessionToken)/,
     );
@@ -411,7 +418,17 @@ describe("conductor ui server", () => {
       path: "open-file",
     });
     expect(beatSync?.params.brandPulse?.default).toBe(false);
-    expect(beatSync?.params.pixelSort?.default).toBe(false);
+    expect(beatSync?.params.pixelSort?.default).toBe(true);
+    expect(beatSync?.params.tempoOctave).toMatchObject({
+      default: "detected",
+      values: ["half", "detected", "double"],
+    });
+    expect(beatSync?.params.phaseNudge).toMatchObject({
+      default: 0,
+      min: -0.5,
+      max: 0.5,
+    });
+    expect(beatSync?.params.transitions).toBeUndefined();
   });
 
   it("validates restored source paths and save-path parents without reading files", async () => {
