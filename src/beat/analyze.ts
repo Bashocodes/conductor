@@ -23,10 +23,23 @@ export interface BeatAnalysis {
   hopSize: number;
   durationSeconds: number;
   estimatedBpm: number | null;
+  beatPeriodSeconds: number | null;
+  beatPhaseSeconds: number | null;
+  beatSnapWindowSeconds: number | null;
+  tempoConfidence: BeatTempoConfidence;
   onsets: DetectedOnset[];
   beatTimesSeconds: number[];
   primaryBeatTimesSeconds: number[];
   downbeatTimesSeconds: number[];
+}
+
+export interface BeatTempoConfidence {
+  level: "low" | "medium" | "high";
+  score: number;
+  autocorrelation: number;
+  ambiguity: number;
+  gridCoverage: number;
+  summary: string;
 }
 
 export interface AnalyzePcmOptions {
@@ -348,6 +361,10 @@ function adaptivePeaks(
   return accepted;
 }
 
+/**
+ * A deliberately coarse tempo estimate used only to resolve autocorrelation's
+ * classic octave ambiguity. It never places a beat.
+ */
 function estimateTempo(times: number[]): number | null {
   const intervals: number[] = [];
   for (let index = 1; index < times.length; index += 1) {
@@ -372,6 +389,388 @@ function estimateTempo(times: number[]): number | null {
     bpm = 60 / secondsPerBeat;
   }
   return Math.round(bpm * 100) / 100;
+}
+
+interface TempoGrid {
+  bpm: number;
+  periodSeconds: number;
+  phaseSeconds: number;
+  snapWindowSeconds: number;
+  beatTimesSeconds: number[];
+  primaryBeatTimesSeconds: number[];
+  downbeatTimesSeconds: number[];
+  confidence: BeatTempoConfidence;
+}
+
+function rounded(value: number): number {
+  return Math.round(value * 1_000_000_000) / 1_000_000_000;
+}
+
+function normalizedAutocorrelation(
+  values: Float64Array,
+  lag: number,
+): number {
+  let product = 0;
+  let leftEnergy = 0;
+  let rightEnergy = 0;
+  for (let index = lag; index < values.length; index += 1) {
+    const left = values[index] as number;
+    const right = values[index - lag] as number;
+    product += left * right;
+    leftEnergy += left * left;
+    rightEnergy += right * right;
+  }
+  const denominator = Math.sqrt(leftEnergy * rightEnergy);
+  return denominator <= Number.EPSILON ? 0 : product / denominator;
+}
+
+function refinedLag(
+  correlations: Map<number, number>,
+  lag: number,
+): number {
+  const previous = correlations.get(lag - 1) ?? 0;
+  const peak = correlations.get(lag) ?? 0;
+  const next = correlations.get(lag + 1) ?? 0;
+  return lag + parabolicPeakOffset(previous, peak, next);
+}
+
+function octaveDistance(leftBpm: number, rightBpm: number): number {
+  let best = Infinity;
+  for (const factor of [0.5, 1, 2]) {
+    best = Math.min(best, Math.abs(Math.log2((leftBpm * factor) / rightBpm)));
+  }
+  return best;
+}
+
+/**
+ * Scores the onset-strength envelope at candidate beat periods. The sparse
+ * detector is not used as the clock: it supplies the octave anchor and later
+ * confirms individual grid positions.
+ */
+function estimateBeatPeriod(
+  envelope: Float64Array,
+  framesPerSecond: number,
+  coarseBpm: number,
+): {
+  lagFrames: number;
+  autocorrelation: number;
+  ambiguity: number;
+} | null {
+  const floor = median([...envelope]);
+  const strengths = Float64Array.from(
+    envelope,
+    (value) => Math.max(0, value - floor),
+  );
+  const minimumLag = Math.max(2, Math.floor((framesPerSecond * 60) / 210));
+  const maximumLag = Math.min(
+    strengths.length - 2,
+    Math.ceil((framesPerSecond * 60) / 55),
+  );
+  if (maximumLag <= minimumLag) return null;
+
+  const correlations = new Map<number, number>();
+  for (let lag = minimumLag; lag <= maximumLag; lag += 1) {
+    correlations.set(lag, normalizedAutocorrelation(strengths, lag));
+  }
+
+  const candidates = [...correlations.entries()]
+    .filter(([lag, value]) =>
+      value > 0 &&
+      value >= (correlations.get(lag - 1) ?? -Infinity) &&
+      value >= (correlations.get(lag + 1) ?? -Infinity)
+    )
+    .map(([lag, value]) => {
+      const rawBpm = (60 * framesPerSecond) / refinedLag(correlations, lag);
+      const variants = [rawBpm / 2, rawBpm, rawBpm * 2]
+        .filter((bpm) => bpm >= 70 && bpm <= 180)
+        .sort(
+          (left, right) =>
+            Math.abs(Math.log2(left / coarseBpm)) -
+            Math.abs(Math.log2(right / coarseBpm)),
+        );
+      const resolvedBpm = variants[0];
+      if (resolvedBpm === undefined) return null;
+      const resolvedLag = (60 * framesPerSecond) / resolvedBpm;
+      return {
+        rawLag: lag,
+        rawValue: value,
+        resolvedLag,
+        resolvedBpm,
+        octaveError: octaveDistance(rawBpm, coarseBpm),
+        coarseError: Math.abs(Math.log2(resolvedBpm / coarseBpm)),
+      };
+    })
+    .filter((candidate) => candidate !== null)
+    .sort((left, right) => {
+      const leftScore =
+        left.rawValue * Math.exp(-left.coarseError * 3.5);
+      const rightScore =
+        right.rawValue * Math.exp(-right.coarseError * 3.5);
+      return rightScore - leftScore;
+    });
+  const best = candidates[0];
+  if (best === undefined) return null;
+
+  // Re-score the resolved period itself. A 188.8-BPM subdivision can win the
+  // raw autocorrelation, but its explicitly resolved 94.4-BPM lag is the clock
+  // Conductor generates.
+  const resolvedIntegerLag = Math.max(
+    minimumLag,
+    Math.min(maximumLag, Math.round(best.resolvedLag)),
+  );
+  const resolvedCorrelation =
+    correlations.get(resolvedIntegerLag) ?? best.rawValue;
+  const competing = candidates.find(
+    (candidate) =>
+      Math.abs(candidate.resolvedLag - best.resolvedLag) >
+        best.resolvedLag * 0.08 &&
+      Math.abs(candidate.resolvedLag - best.resolvedLag * 0.5) >
+        best.resolvedLag * 0.08 &&
+      Math.abs(candidate.resolvedLag - best.resolvedLag * 2) >
+        best.resolvedLag * 0.08,
+  );
+  const competingCorrelation = competing?.rawValue ?? 0;
+  const ambiguity =
+    resolvedCorrelation <= Number.EPSILON
+      ? 1
+      : Math.max(
+          0,
+          Math.min(1, competingCorrelation / resolvedCorrelation),
+        );
+  return {
+    lagFrames: best.resolvedLag,
+    autocorrelation: resolvedCorrelation,
+    ambiguity,
+  };
+}
+
+function circularDistance(value: number, period: number): number {
+  const wrapped = ((value % period) + period) % period;
+  return Math.min(wrapped, period - wrapped);
+}
+
+function estimateBeatPhase(
+  onsets: DetectedOnset[],
+  periodSeconds: number,
+): number {
+  const candidates = [
+    0,
+    ...onsets.map(
+      (onset) =>
+        ((onset.timeSeconds % periodSeconds) + periodSeconds) %
+        periodSeconds,
+    ),
+  ];
+  const sigma = periodSeconds / 16;
+  let bestPhase = 0;
+  let bestScore = -Infinity;
+  for (const phase of candidates) {
+    let score = 0;
+    for (const onset of onsets) {
+      const distance = circularDistance(
+        onset.timeSeconds - phase,
+        periodSeconds,
+      );
+      const normalized = distance / sigma;
+      score += onset.strength * Math.exp(-0.5 * normalized * normalized);
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestPhase = phase;
+    }
+  }
+  return bestPhase;
+}
+
+function refineTempoGrid(
+  onsets: DetectedOnset[],
+  phaseSeconds: number,
+  periodSeconds: number,
+  durationSeconds: number,
+): {
+  phaseSeconds: number;
+  periodSeconds: number;
+} {
+  const snapWindow = periodSeconds / 8;
+  const matched: Array<{ index: number; timeSeconds: number }> = [];
+  const beatCount = Math.ceil(
+    Math.max(0, durationSeconds - phaseSeconds) / periodSeconds,
+  );
+  for (let index = 0; index < beatCount; index += 1) {
+    const gridTime = phaseSeconds + index * periodSeconds;
+    let strongest: DetectedOnset | undefined;
+    for (const onset of onsets) {
+      if (
+        Math.abs(onset.timeSeconds - gridTime) <=
+          snapWindow + Number.EPSILON &&
+        (strongest === undefined || onset.strength > strongest.strength)
+      ) {
+        strongest = onset;
+      }
+    }
+    if (strongest !== undefined) {
+      matched.push({ index, timeSeconds: strongest.timeSeconds });
+    }
+  }
+  if (matched.length < 3) {
+    return { phaseSeconds, periodSeconds };
+  }
+
+  let indexMean = 0;
+  let timeMean = 0;
+  for (const match of matched) {
+    indexMean += match.index;
+    timeMean += match.timeSeconds;
+  }
+  indexMean /= matched.length;
+  timeMean /= matched.length;
+  let numerator = 0;
+  let denominator = 0;
+  for (const match of matched) {
+    numerator +=
+      (match.index - indexMean) * (match.timeSeconds - timeMean);
+    denominator += (match.index - indexMean) ** 2;
+  }
+  if (denominator <= Number.EPSILON) {
+    return { phaseSeconds, periodSeconds };
+  }
+  const refinedPeriod = numerator / denominator;
+  if (
+    !Number.isFinite(refinedPeriod) ||
+    Math.abs(refinedPeriod - periodSeconds) > periodSeconds * 0.03
+  ) {
+    return { phaseSeconds, periodSeconds };
+  }
+  const intercept = timeMean - refinedPeriod * indexMean;
+  const refinedPhase =
+    ((intercept % refinedPeriod) + refinedPeriod) % refinedPeriod;
+  return {
+    phaseSeconds: refinedPhase,
+    periodSeconds: refinedPeriod,
+  };
+}
+
+function confidenceForGrid(
+  autocorrelation: number,
+  ambiguity: number,
+  matchedBeatCount: number,
+  beatCount: number,
+): BeatTempoConfidence {
+  const gridCoverage =
+    beatCount === 0 ? 0 : matchedBeatCount / beatCount;
+  const clarity = 1 - ambiguity;
+  const score = Math.max(
+    0,
+    Math.min(
+      1,
+      autocorrelation * 0.45 + clarity * 0.25 + gridCoverage * 0.3,
+    ),
+  );
+  const level =
+    autocorrelation < 0.08 || clarity < 0.08 || gridCoverage < 0.35
+      ? "low"
+      : autocorrelation < 0.18 || clarity < 0.2 || gridCoverage < 0.65
+        ? "medium"
+        : "high";
+  const percent = Math.round(gridCoverage * 100);
+  const summary =
+    level === "low"
+      ? ambiguity > 0.9
+        ? `Low tempo-grid confidence: competing tempo periods are nearly tied, although ${percent}% of grid beats have a confirming onset. Review the map before rendering.`
+        : `Low tempo-grid confidence: the tempo pulse is weak or only ${percent}% of grid beats have a confirming onset. Review the map before rendering.`
+      : level === "medium"
+        ? `Medium tempo-grid confidence: ${percent}% of grid beats have a confirming onset; preview the map before rendering.`
+        : `High tempo-grid confidence: ${percent}% of grid beats have a confirming onset.`;
+  return {
+    level,
+    score: rounded(score),
+    autocorrelation: rounded(autocorrelation),
+    ambiguity: rounded(ambiguity),
+    gridCoverage: rounded(gridCoverage),
+    summary,
+  };
+}
+
+function buildTempoGrid(
+  envelope: Float64Array,
+  onsets: DetectedOnset[],
+  durationSeconds: number,
+  hopSize: number,
+  sampleRate: number,
+): TempoGrid | null {
+  const coarseBpm = estimateTempo(onsets.map((onset) => onset.timeSeconds));
+  if (coarseBpm === null) return null;
+  const framesPerSecond = sampleRate / hopSize;
+  const estimate = estimateBeatPeriod(envelope, framesPerSecond, coarseBpm);
+  if (estimate === null) return null;
+  // When two autocorrelation periods are effectively tied, refining the lag
+  // against whichever one won by rounding noise creates a false precision.
+  // Keep the robust inter-onset median as the octave-resolved anchor, while
+  // retaining the low confidence verdict for the plan.
+  const periodIsAmbiguous = estimate.ambiguity > 0.85;
+  const initialPeriodSeconds = periodIsAmbiguous
+    ? 60 / coarseBpm
+    : estimate.lagFrames / framesPerSecond;
+  const initialPhaseSeconds = estimateBeatPhase(onsets, initialPeriodSeconds);
+  const refined = periodIsAmbiguous
+    ? {
+        phaseSeconds: initialPhaseSeconds,
+        periodSeconds: initialPeriodSeconds,
+      }
+    : refineTempoGrid(
+        onsets,
+        initialPhaseSeconds,
+        initialPeriodSeconds,
+        durationSeconds,
+      );
+  const periodSeconds = refined.periodSeconds;
+  const bpm = 60 / periodSeconds;
+  const phaseSeconds = refined.phaseSeconds;
+  const snapWindowSeconds = periodSeconds / 8;
+  const beatTimesSeconds: number[] = [];
+  let matchedBeatCount = 0;
+
+  const beatCount = Math.ceil(
+    Math.max(0, durationSeconds - phaseSeconds) / periodSeconds,
+  );
+  for (let index = 0; index < beatCount; index += 1) {
+    const gridTime = phaseSeconds + index * periodSeconds;
+    if (gridTime >= durationSeconds - Number.EPSILON) break;
+    let strongest: DetectedOnset | undefined;
+    for (const onset of onsets) {
+      if (
+        Math.abs(onset.timeSeconds - gridTime) <=
+          snapWindowSeconds + Number.EPSILON &&
+        (strongest === undefined || onset.strength > strongest.strength)
+      ) {
+        strongest = onset;
+      }
+    }
+    if (strongest !== undefined) matchedBeatCount += 1;
+    beatTimesSeconds.push(rounded(strongest?.timeSeconds ?? gridTime));
+  }
+
+  const primaryBeatTimesSeconds = beatTimesSeconds.filter(
+    (_time, index) => index % 2 === 0,
+  );
+  const downbeatTimesSeconds = beatTimesSeconds.filter(
+    (_time, index) => index % 4 === 0,
+  );
+  return {
+    bpm: Math.round(bpm * 100) / 100,
+    periodSeconds: rounded(periodSeconds),
+    phaseSeconds: rounded(phaseSeconds),
+    snapWindowSeconds: rounded(snapWindowSeconds),
+    beatTimesSeconds,
+    primaryBeatTimesSeconds,
+    downbeatTimesSeconds,
+    confidence: confidenceForGrid(
+      estimate.autocorrelation,
+      estimate.ambiguity,
+      matchedBeatCount,
+      beatTimesSeconds.length,
+    ),
+  };
 }
 
 function classifyPeaks(
@@ -443,9 +842,8 @@ function classifyPeaks(
 
   return localized.map((onset, index) => ({
     ...onset,
-    // With no score or meter metadata, assigning the first accepted pulse as
-    // phase zero is an explicit structural estimate. It creates a stable
-    // four-beat edit hierarchy without pretending to infer musical semantics.
+    // This remains a diagnostic label on the raw transient list. Edit
+    // structure comes from buildTempoGrid(), not from onset order.
     importance:
       index % 4 === 0
         ? "downbeat"
@@ -495,21 +893,39 @@ export function analyzePcm(
     sampleRate,
     percussiveSignal,
   );
-  const beatTimesSeconds = onsets.map((onset) => onset.timeSeconds);
+  const durationSeconds = pcm.length / sampleRate;
+  const tempoGrid = buildTempoGrid(
+    envelope,
+    onsets,
+    durationSeconds,
+    hopSize,
+    sampleRate,
+  );
+  const unavailableConfidence: BeatTempoConfidence = {
+    level: "low",
+    score: 0,
+    autocorrelation: 0,
+    ambiguity: 1,
+    gridCoverage: 0,
+    summary:
+      "Low tempo-grid confidence: no stable tempo and phase could be estimated. Review the source before rendering.",
+  };
   return {
     sampleRate,
     windowSize,
     hopSize,
-    durationSeconds: pcm.length / sampleRate,
-    estimatedBpm: estimateTempo(beatTimesSeconds),
+    durationSeconds,
+    estimatedBpm: tempoGrid?.bpm ?? null,
+    beatPeriodSeconds: tempoGrid?.periodSeconds ?? null,
+    beatPhaseSeconds: tempoGrid?.phaseSeconds ?? null,
+    beatSnapWindowSeconds: tempoGrid?.snapWindowSeconds ?? null,
+    tempoConfidence: tempoGrid?.confidence ?? unavailableConfidence,
     onsets,
-    beatTimesSeconds,
-    primaryBeatTimesSeconds: onsets
-      .filter((onset) => onset.importance === "primary")
-      .map((onset) => onset.timeSeconds),
-    downbeatTimesSeconds: onsets
-      .filter((onset) => onset.importance === "downbeat")
-      .map((onset) => onset.timeSeconds),
+    beatTimesSeconds: tempoGrid?.beatTimesSeconds ?? [],
+    primaryBeatTimesSeconds:
+      tempoGrid?.primaryBeatTimesSeconds ?? [],
+    downbeatTimesSeconds:
+      tempoGrid?.downbeatTimesSeconds ?? [],
   };
 }
 

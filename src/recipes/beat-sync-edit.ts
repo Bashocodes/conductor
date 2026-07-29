@@ -126,6 +126,20 @@ export const beatSyncEditRecipe = recipeSchema.parse({
       default: 0,
       min: 0,
     },
+    planTempoConfidence: {
+      type: "json",
+      description:
+        "Internal: autocorrelation ambiguity and onset coverage for the generated tempo grid.",
+      internal: true,
+      default: {
+        level: "low",
+        score: 0,
+        autocorrelation: 0,
+        ambiguity: 1,
+        gridCoverage: 0,
+        summary: "Tempo-grid confidence is unavailable.",
+      },
+    },
     planBeatCount: {
       type: "number",
       description: "Internal: accepted quantized beat count.",

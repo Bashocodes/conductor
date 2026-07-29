@@ -24,6 +24,17 @@ const analysis: BeatAnalysis = {
   hopSize: 512,
   durationSeconds: 4.5,
   estimatedBpm: 120,
+  beatPeriodSeconds: 0.5,
+  beatPhaseSeconds: 0.5,
+  beatSnapWindowSeconds: 0.0625,
+  tempoConfidence: {
+    level: "high",
+    score: 1,
+    autocorrelation: 1,
+    ambiguity: 0,
+    gridCoverage: 1,
+    summary: "High tempo-grid confidence: 100% of grid beats have a confirming onset.",
+  },
   onsets: times.map((timeSeconds, index) => ({
     timeSeconds,
     envelopeFrame: Math.round((timeSeconds * 22_050) / 512),
