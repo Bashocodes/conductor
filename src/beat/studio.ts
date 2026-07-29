@@ -1,5 +1,8 @@
 import type { JsonValue } from "../schema/json.js";
-import type { BeatAnalysis } from "./analyze.js";
+import type {
+  BeatAnalysis,
+  BeatTempoConfidence,
+} from "./analyze.js";
 import {
   buildBeatSyncEvents,
   buildQuantizedBeatMap,
@@ -42,6 +45,7 @@ export interface PreparedBeatSyncPlan {
   mediaDurationSeconds: number;
   durationLimit: "audio" | "media";
   estimatedBpm: number | null;
+  tempoConfidence: BeatTempoConfidence;
   beatCount: number;
   cutCount: number;
   markers: BeatSyncMarker[];
@@ -83,6 +87,14 @@ function nearestOnset(
       nearest = candidate;
       distance = candidateDistance;
     }
+  }
+  const snapWindow = analysis.beatSnapWindowSeconds;
+  if (
+    nearest === undefined ||
+    snapWindow === null ||
+    distance > snapWindow * 1.5
+  ) {
+    return undefined;
   }
   return nearest;
 }
@@ -422,6 +434,7 @@ export function buildBeatSyncStudioPlan(
     mediaDurationSeconds: durationBudget.mediaDurationSeconds,
     durationLimit,
     estimatedBpm: analysis.estimatedBpm,
+    tempoConfidence: analysis.tempoConfidence,
     beatCount: beats.length,
     cutCount: cuts.length,
     markers,
@@ -485,6 +498,7 @@ export function withBeatSyncPlanParams(
     planMediaDurationSeconds: plan.mediaDurationSeconds,
     planDurationLimit: plan.durationLimit,
     planEstimatedBpm: plan.estimatedBpm ?? 0,
+    planTempoConfidence: plan.tempoConfidence,
     planBeatCount: plan.beatCount,
     planCutCount: plan.cutCount,
     planMarkers: plan.markers,
