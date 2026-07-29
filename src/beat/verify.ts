@@ -447,6 +447,42 @@ export function ffprobeFrameRateArgs(path: string): string[] {
   ];
 }
 
+export function ffprobeDurationArgs(path: string): string[] {
+  return [
+    "-v",
+    "error",
+    "-show_entries",
+    "format=duration",
+    "-of",
+    "json",
+    path,
+  ];
+}
+
+/**
+ * Returns null for valid still-image containers, which ffprobe can inspect but
+ * which do not carry a timeline duration. Invalid or unreadable files still
+ * reject at execFile so callers can refuse an incomplete media budget.
+ */
+export async function probeMediaDuration(
+  path: string,
+  ffprobePath: string,
+): Promise<number | null> {
+  const { stdout } = await execFileAsync(
+    ffprobePath,
+    ffprobeDurationArgs(path),
+    { timeout: 30_000 },
+  );
+  const parsed = JSON.parse(stdout) as {
+    format?: { duration?: unknown };
+  };
+  const value = parsed.format?.duration;
+  if (value === undefined) return null;
+  const duration = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(duration) || duration <= 0) return null;
+  return duration;
+}
+
 export function parseFrameRate(value: string): number {
   const match = /^(\d+)\/(\d+)$/.exec(value);
   if (match === null) throw new Error(`Invalid rendered frame rate '${value}'.`);
