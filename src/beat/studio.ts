@@ -38,6 +38,9 @@ export interface BeatSyncMediaSegment {
 
 export interface PreparedBeatSyncPlan {
   durationSeconds: number;
+  audioDurationSeconds: number;
+  mediaDurationSeconds: number;
+  durationLimit: "audio" | "media";
   estimatedBpm: number | null;
   beatCount: number;
   cutCount: number;
@@ -48,6 +51,11 @@ export interface PreparedBeatSyncPlan {
   transitionKeyframes: Array<{ time: number; value: JsonValue }>;
   pixelSortKeyframes: Array<{ time: number; value: JsonValue }>;
   brandKeyframes: Array<{ time: number; value: JsonValue }>;
+}
+
+export interface BeatSyncDurationBudget {
+  mediaDurationSeconds: number;
+  mediaDurationsSeconds: number[];
 }
 
 function nearestOnsetTime(
@@ -208,9 +216,89 @@ function enabledFamilies(
   return families;
 }
 
+function buildMediaSegments(
+  params: BeatSyncStudioParams,
+  durationBudget: BeatSyncDurationBudget,
+  durationSeconds: number,
+  cuts: Array<{
+    event: BeatSyncEvent;
+    intendedOnsetSeconds: number;
+  }>,
+): BeatSyncMediaSegment[] {
+  if (params.media.length === 1) {
+    return [{
+      path: params.media[0] as string,
+      name: "Beat Sync Shot 001",
+      timelineInSeconds: 0,
+      timelineOutSeconds: durationSeconds,
+      sourceInSeconds: 0,
+    }];
+  }
+
+  const epsilon = 1 / (params.frameRate * 1_000);
+  const segments: BeatSyncMediaSegment[] = [];
+  let timelineInSeconds = 0;
+  let mediaIndex = 0;
+  let cutIndex = 0;
+  let boundaryCut:
+    | {
+        event: BeatSyncEvent;
+        intendedOnsetSeconds: number;
+      }
+    | undefined;
+
+  while (timelineInSeconds < durationSeconds - epsilon) {
+    const sourceDuration =
+      durationBudget.mediaDurationsSeconds[mediaIndex] as number;
+    const nextCut = cuts[cutIndex];
+    const nextCutTime = nextCut?.event.timeSeconds ?? Number.POSITIVE_INFINITY;
+    const sourceEndTime = timelineInSeconds + sourceDuration;
+    const timelineOutSeconds = Math.min(
+      durationSeconds,
+      sourceEndTime,
+      nextCutTime,
+    );
+    if (timelineOutSeconds <= timelineInSeconds + epsilon) {
+      throw new Error(
+        "Beat Sync Studio could not build a positive media segment from the "
+          + "selected bin durations.",
+      );
+    }
+
+    segments.push({
+      path: params.media[mediaIndex] as string,
+      name: `Beat Sync Shot ${String(segments.length + 1).padStart(3, "0")}`,
+      timelineInSeconds,
+      timelineOutSeconds,
+      sourceInSeconds: 0,
+      ...(boundaryCut === undefined
+        ? {}
+        : {
+            cutFrame: boundaryCut.event.frame,
+            intendedOnsetSeconds: boundaryCut.intendedOnsetSeconds,
+          }),
+    });
+
+    const endedOnPlannedCut =
+      nextCut !== undefined &&
+      Math.abs(timelineOutSeconds - nextCut.event.timeSeconds) <= epsilon;
+    timelineInSeconds = timelineOutSeconds;
+    mediaIndex = (mediaIndex + 1) % params.media.length;
+    if (endedOnPlannedCut) {
+      boundaryCut = nextCut;
+      cutIndex += 1;
+    } else {
+      boundaryCut = undefined;
+    }
+  }
+
+  return segments;
+}
+
 export function buildBeatSyncStudioPlan(
   params: BeatSyncStudioParams,
   analysis: BeatAnalysis,
+  durationBudget: BeatSyncDurationBudget,
 ): PreparedBeatSyncPlan {
   if (params.media.length === 0) {
     throw new Error("Beat Sync Studio requires at least one media file.");
@@ -220,21 +308,47 @@ export function buildBeatSyncStudioPlan(
       "Beat analysis found no usable onsets; refusing to build an unverified beat-sync edit.",
     );
   }
+  if (
+    !Number.isFinite(durationBudget.mediaDurationSeconds) ||
+    durationBudget.mediaDurationSeconds <= 0
+  ) {
+    throw new Error(
+      "Beat Sync Studio could not determine a positive duration for the selected media.",
+    );
+  }
+  if (
+    durationBudget.mediaDurationsSeconds.length !== params.media.length ||
+    durationBudget.mediaDurationsSeconds.some(
+      (duration) => !Number.isFinite(duration) || duration <= 0,
+    )
+  ) {
+    throw new Error(
+      "Beat Sync Studio requires one positive probed duration for every selected media file.",
+    );
+  }
 
+  const durationLimit =
+    analysis.durationSeconds <= durationBudget.mediaDurationSeconds
+      ? "audio"
+      : "media";
+  const unquantizedDurationSeconds = Math.min(
+    analysis.durationSeconds,
+    durationBudget.mediaDurationSeconds,
+  );
+  const durationSeconds =
+    Math.max(1, Math.floor(unquantizedDurationSeconds * params.frameRate)) /
+    params.frameRate;
   const beats = buildQuantizedBeatMap({
     beatTimesSeconds: analysis.beatTimesSeconds,
     primaryBeatTimesSeconds: analysis.primaryBeatTimesSeconds,
     downbeatTimesSeconds: analysis.downbeatTimesSeconds,
     frameRate: params.frameRate,
-  });
+  }).filter((beat) => beat.timeSeconds < durationSeconds);
   const events = buildBeatSyncEvents(beats, {
     density: params.density,
     brandPulse: params.brandPulse,
     allowedEventFamilies: enabledFamilies(params),
   });
-  const durationSeconds =
-    Math.max(1, Math.floor(analysis.durationSeconds * params.frameRate)) /
-    params.frameRate;
   const markers = events.map((event) => {
     const detected = nearestOnsetTime(analysis, event);
     return {
@@ -256,37 +370,18 @@ export function buildBeatSyncStudioPlan(
       event,
       intendedOnsetSeconds: nearestOnsetTime(analysis, event),
     }));
-  const boundaries = [
-    { frame: 0, timeSeconds: 0 },
-    ...cuts.map(({ event }) => ({
-      frame: event.frame,
-      timeSeconds: event.timeSeconds,
-    })),
-  ];
-  const mediaSegments: BeatSyncMediaSegment[] = boundaries.map(
-    (boundary, index) => {
-      const next = boundaries[index + 1];
-      const path = params.media[index % params.media.length] as string;
-      const cut = index === 0 ? undefined : cuts[index - 1];
-      return {
-        path,
-        name: `Beat Sync Shot ${String(index + 1).padStart(3, "0")}`,
-        timelineInSeconds: boundary.timeSeconds,
-        timelineOutSeconds: next?.timeSeconds ?? durationSeconds,
-        sourceInSeconds:
-          params.media.length === 1 ? boundary.timeSeconds : 0,
-        ...(cut === undefined
-          ? {}
-          : {
-              cutFrame: boundary.frame,
-              intendedOnsetSeconds: cut.intendedOnsetSeconds,
-            }),
-      };
-    },
+  const mediaSegments = buildMediaSegments(
+    params,
+    durationBudget,
+    durationSeconds,
+    cuts,
   );
 
   return {
     durationSeconds,
+    audioDurationSeconds: analysis.durationSeconds,
+    mediaDurationSeconds: durationBudget.mediaDurationSeconds,
+    durationLimit,
     estimatedBpm: analysis.estimatedBpm,
     beatCount: beats.length,
     cutCount: cuts.length,
@@ -343,6 +438,9 @@ export function withBeatSyncPlanParams(
   return {
     ...params,
     planDurationSeconds: plan.durationSeconds,
+    planAudioDurationSeconds: plan.audioDurationSeconds,
+    planMediaDurationSeconds: plan.mediaDurationSeconds,
+    planDurationLimit: plan.durationLimit,
     planEstimatedBpm: plan.estimatedBpm ?? 0,
     planBeatCount: plan.beatCount,
     planCutCount: plan.cutCount,

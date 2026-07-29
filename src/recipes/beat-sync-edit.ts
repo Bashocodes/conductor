@@ -93,10 +93,31 @@ export const beatSyncEditRecipe = recipeSchema.parse({
     // unmeasured edit and calling it beat-synced.
     planDurationSeconds: {
       type: "number",
-      description: "Internal: frame-quantized audio duration.",
+      description: "Internal: frame-quantized edit duration.",
       internal: true,
       default: 0.1,
       min: 0.001,
+    },
+    planAudioDurationSeconds: {
+      type: "number",
+      description: "Internal: analyzed score duration before edit trimming.",
+      internal: true,
+      default: 0.1,
+      min: 0.001,
+    },
+    planMediaDurationSeconds: {
+      type: "number",
+      description: "Internal: summed selected-media duration before frame quantization.",
+      internal: true,
+      default: 0.1,
+      min: 0.001,
+    },
+    planDurationLimit: {
+      type: "enum",
+      description: "Internal: whether media or audio ends the edit.",
+      values: ["media", "audio"],
+      internal: true,
+      default: "media",
     },
     planEstimatedBpm: {
       type: "number",

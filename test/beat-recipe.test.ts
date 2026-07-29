@@ -53,10 +53,22 @@ const publicParams = {
   frameRate: 30,
   outputPath: "/renders/beat-sync.mp4",
 };
+const durationBudget = {
+  mediaDurationSeconds: 10,
+  mediaDurationsSeconds: [5, 5],
+};
+const continuousDurationBudget = {
+  mediaDurationSeconds: 10,
+  mediaDurationsSeconds: [10],
+};
 
 describe("Beat Sync Studio recipe", () => {
   it("turns one analyzed map into markers, hierarchy-aware edits, and accents", () => {
-    const plan = buildBeatSyncStudioPlan(publicParams, analysis);
+    const plan = buildBeatSyncStudioPlan(
+      publicParams,
+      analysis,
+      durationBudget,
+    );
 
     expect(plan.beatCount).toBe(8);
     expect(plan.markers).toHaveLength(8);
@@ -90,7 +102,11 @@ describe("Beat Sync Studio recipe", () => {
       ],
     };
 
-    const plan = buildBeatSyncStudioPlan(publicParams, subHopAnalysis);
+    const plan = buildBeatSyncStudioPlan(
+      publicParams,
+      subHopAnalysis,
+      durationBudget,
+    );
 
     expect(plan.pixelSortKeyframes).toContainEqual({
       time: sampleTime,
@@ -109,7 +125,11 @@ describe("Beat Sync Studio recipe", () => {
       })),
     };
 
-    const plan = buildBeatSyncStudioPlan(publicParams, unclassifiedOnsets);
+    const plan = buildBeatSyncStudioPlan(
+      publicParams,
+      unclassifiedOnsets,
+      durationBudget,
+    );
 
     expect(plan.pixelSortKeyframes).toContainEqual({ time: 0.5, value: 100 });
     expect(plan.pixelSortKeyframes).toContainEqual({ time: 1, value: 30 });
@@ -120,6 +140,7 @@ describe("Beat Sync Studio recipe", () => {
     const plan = buildBeatSyncStudioPlan(
       { ...publicParams, media: ["/media/continuous.mov"] },
       analysis,
+      continuousDurationBudget,
     );
 
     expect(plan.cutCount).toBe(0);
@@ -128,7 +149,11 @@ describe("Beat Sync Studio recipe", () => {
   });
 
   it("executes as ordinary verified ToolContract data and ends in HLG delivery", async () => {
-    const plan = buildBeatSyncStudioPlan(publicParams, analysis);
+    const plan = buildBeatSyncStudioPlan(
+      publicParams,
+      analysis,
+      durationBudget,
+    );
     const params = withBeatSyncPlanParams(publicParams, plan);
     const provider = new FakeAeClientProvider();
     const directory = await mkdtemp(join(tmpdir(), "beat-recipe-"));
