@@ -185,6 +185,8 @@
   .banner.ok { background: rgba(121,201,154,.1); border: 1px solid rgba(121,201,154,.35); color: #c9f5d9; }
   .banner.bad { background: rgba(240,122,122,.1); border: 1px solid rgba(240,122,122,.35); color: #ffc9c9; }
   .banner.warn { background: rgba(224,175,104,.1); border: 1px solid rgba(224,175,104,.35); color: #f3ddb6; }
+  .recipe-memory { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .recipe-memory-copy { min-width: 0; line-height: 1.45; overflow-wrap: anywhere; }
   pre.render-log { max-height: 220px; margin-top: 10px; white-space: pre-wrap; }
   code { font-family: var(--mono); font-size: .93em; }
 

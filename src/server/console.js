@@ -311,6 +311,9 @@ let beatMediaPaths = [];
 let beatAnalysis = null;
 let beatAnalysisSignature = "";
 let beatAnalyzing = false;
+let beatAnalysisStale = false;
+let recipeRestoreGeneration = 0;
+let restoringRecipeState = false;
 
 /* Mirrors the placement constants in the ExtendScript that actually positions
    the logo. If these two ever disagree, the stage is lying. */
@@ -344,6 +347,245 @@ function loadMotionState() {
 function saveMotionState() {
   try { localStorage.setItem("conductor.watermarkMotion", JSON.stringify(motionState)); }
   catch { /* private browsing; the controls still work for this session */ }
+}
+
+function recipeStateKey(recipeId) {
+  return "conductor.params." + recipeId;
+}
+
+function loadRecipeState(recipeId) {
+  try {
+    const stored = JSON.parse(localStorage.getItem(recipeStateKey(recipeId)) || "null");
+    if (
+      stored &&
+      typeof stored === "object" &&
+      stored.version === 1 &&
+      stored.params &&
+      typeof stored.params === "object"
+    ) {
+      return stored;
+    }
+  } catch { /* malformed browser state falls back to an empty recipe */ }
+  return null;
+}
+
+function saveRecipeState() {
+  if (!selected || restoringRecipeState) return;
+  try {
+    const params = collectParams("Full");
+    delete params.renderMode;
+    delete params.watermarkPath;
+    for (const [name, def] of Object.entries(selected.params)) {
+      const control = $("p_" + name);
+      if (
+        def.path === "save-file" &&
+        control &&
+        control.dataset.autoSuggested === "true"
+      ) {
+        delete params[name];
+      }
+    }
+    localStorage.setItem(recipeStateKey(selected.id), JSON.stringify({
+      version: 1,
+      params,
+      ...(selected.id === LAB ? { selectedLook } : {}),
+    }));
+  } catch { /* private browsing; the live form remains authoritative */ }
+}
+
+function appendRecipeMemoryControls() {
+  const host = $("params");
+  if (!host || !selected) return;
+  const memory = el("div", "banner warn recipe-memory");
+  memory.id = "recipeMemory";
+  const copy = el(
+    "span",
+    "recipe-memory-copy",
+    "Settings for this recipe stay in this browser until you clear them.",
+  );
+  copy.id = "recipeMemoryCopy";
+  memory.appendChild(copy);
+  const clear = el("button", "browse", "Clear saved settings");
+  clear.type = "button";
+  clear.onclick = () => {
+    try { localStorage.removeItem(recipeStateKey(selected.id)); }
+    catch { /* the visible form can still be reset */ }
+    if (selected.id === BEAT_SYNC) {
+      beatMediaPaths = [];
+      resetBeatAnalysis(false);
+    }
+    renderParams({ restore: false });
+    const message = $("recipeMemoryCopy");
+    if (message) message.textContent = "Saved settings cleared; defaults are shown.";
+  };
+  memory.appendChild(clear);
+  host.prepend(memory);
+}
+
+function showRecipeMemoryMessage(text) {
+  const copy = $("recipeMemoryCopy");
+  if (copy) copy.textContent = text;
+}
+
+function setRestoredControl(name, def, value) {
+  const control = $("p_" + name);
+  if (!control) return;
+  if (def.type === "boolean") {
+    if (typeof value === "boolean") {
+      control.checked = value;
+      control.dispatchEvent(new Event("input"));
+      control.dispatchEvent(new Event("change"));
+    }
+    return;
+  }
+  if (def.type === "number") {
+    if (typeof value !== "number" || !Number.isFinite(value)) return;
+    control.value = String(value);
+    control.dispatchEvent(new Event("input"));
+    return;
+  }
+  if (def.type === "enum") {
+    if (!def.values.includes(value)) return;
+    control.value = value;
+    const group = control.nextElementSibling;
+    if (group) {
+      for (const button of group.querySelectorAll("button")) {
+        button.setAttribute(
+          "aria-pressed",
+          String(button.dataset.value === value),
+        );
+      }
+    }
+    return;
+  }
+  if (typeof value !== "string") return;
+  if (
+    name === "logoPath" &&
+    control.tagName === "SELECT" &&
+    !Array.from(control.options).some((option) => option.value === value)
+  ) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value.split("/").pop();
+    control.appendChild(option);
+  }
+  control.value = value;
+  if (def.path === "save-file") control.dataset.autoSuggested = "false";
+  control.dispatchEvent(new Event("input"));
+}
+
+async function restoreRecipeState(recipeId, generation) {
+  const stored = loadRecipeState(recipeId);
+  if (!stored) return;
+  const params = Object.assign({}, stored.params);
+  const requestedPaths = [];
+  for (const [name, def] of Object.entries(selected.params)) {
+    const value = params[name];
+    if (def.path === "open-file" && typeof value === "string") {
+      requestedPaths.push(value);
+    } else if (
+      def.type === "files" &&
+      Array.isArray(value)
+    ) {
+      for (const path of value) {
+        if (typeof path === "string") requestedPaths.push(path);
+      }
+    } else if (def.path === "save-file" && typeof value === "string") {
+      requestedPaths.push(value);
+    }
+  }
+
+  let validation = new Map();
+  let validationFailed = false;
+  if (requestedPaths.length > 0) {
+    try {
+      const result = await api("/api/paths/validate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ paths: [...new Set(requestedPaths)] }),
+      });
+      validation = new Map(result.paths.map((entry) => [entry.path, entry]));
+    } catch {
+      validationFailed = true;
+    }
+  }
+  if (
+    generation !== recipeRestoreGeneration ||
+    !selected ||
+    selected.id !== recipeId
+  ) {
+    return;
+  }
+
+  const dropped = [];
+  restoringRecipeState = true;
+  try {
+    for (const [name, def] of Object.entries(selected.params)) {
+      let value = params[name];
+      if (def.path === "open-file" && typeof value === "string") {
+        if (validationFailed || validation.get(value)?.exists !== true) {
+          dropped.push(value);
+          value = undefined;
+        }
+      } else if (def.type === "files" && Array.isArray(value)) {
+        value = value.filter((path) => {
+          const keep =
+            typeof path === "string" &&
+            !validationFailed &&
+            validation.get(path)?.exists === true;
+          if (!keep && typeof path === "string") dropped.push(path);
+          return keep;
+        });
+      } else if (def.path === "save-file" && typeof value === "string") {
+        if (validationFailed || validation.get(value)?.parentExists !== true) {
+          dropped.push(value);
+          value = undefined;
+        }
+      }
+      if (value !== undefined) setRestoredControl(name, def, value);
+    }
+
+    if (selected.id === BEAT_SYNC) {
+      beatMediaPaths = Array.isArray(params.media)
+        ? params.media.filter(
+            (path) =>
+              typeof path === "string" &&
+              !validationFailed &&
+              validation.get(path)?.exists === true,
+          )
+        : [];
+      resetBeatAnalysis(true);
+      renderBeatMediaList();
+    }
+    if (selected.id === LAB && typeof stored.selectedLook === "string") {
+      if (CINEMATIC_LOOKS.some(([look]) => look === stored.selectedLook)) {
+        selectedLook = stored.selectedLook;
+        renderLookCards();
+        renderStage();
+      }
+    }
+  } finally {
+    restoringRecipeState = false;
+  }
+  saveRecipeState();
+  updateReadiness();
+  if (validationFailed) {
+    showRecipeMemoryMessage(
+      "Saved non-file settings restored. Paths could not be verified and were dropped.",
+    );
+  } else if (dropped.length > 0) {
+    showRecipeMemoryMessage(
+      "Restored settings. Dropped missing path"
+        + (dropped.length === 1 ? ": " : "s: ")
+        + dropped.join(", "),
+    );
+  } else if (selected.id === BEAT_SYNC) {
+    showRecipeMemoryMessage(
+      "Restored settings. The beat map is stale and must be analyzed again before rendering.",
+    );
+  } else {
+    showRecipeMemoryMessage("Saved settings restored for this recipe.");
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -555,6 +797,7 @@ function createParamControl(name, def) {
     }
     updateReadiness();
     stageNeedsRepaint();
+    saveRecipeState();
   });
   return control;
 }
@@ -633,6 +876,7 @@ function appendSlider(host, name, def, options) {
     if (settings.onInput) settings.onInput(Number(control.value));
     updateReadiness();
     stageNeedsRepaint();
+    saveRecipeState();
   });
 
   field.appendChild(control);
@@ -673,6 +917,7 @@ function appendSegmented(host, name, values, initial, options) {
       if (settings.onChange) settings.onChange(value);
       updateReadiness();
       stageNeedsRepaint();
+      saveRecipeState();
     };
     button.dataset.value = value;
     buttons.push(button);
@@ -814,6 +1059,7 @@ function selectLook(look, options) {
   const settings = options || {};
   const cleared = settings.toggle === true && selectedLook === look;
   selectedLook = cleared ? CINEMATIC_LOOKS[0][0] : look;
+  saveRecipeState();
   renderLookCards();
   const run = $("btnRun");
   if (run) run.textContent = "Render " + selectedLook;
@@ -963,9 +1209,17 @@ function renderBeatAnalysis() {
   }
   if (beatAnalysis === null) {
     host.className = "beat-analysis";
-    host.appendChild(el("b", null, "Analysis required before render."));
+    host.appendChild(el(
+      "b",
+      null,
+      beatAnalysisStale
+        ? "Restored beat map is stale."
+        : "Analysis required before render.",
+    ));
     host.appendChild(document.createTextNode(
-      " The detected beat count and estimated tempo will appear here."));
+      beatAnalysisStale
+        ? " Run analysis again for the restored audio before rendering."
+        : " The detected beat count and estimated tempo will appear here."));
     return;
   }
   host.className = "beat-analysis ready";
@@ -980,6 +1234,14 @@ function renderBeatAnalysis() {
     " · " + String(beatAnalysis.cutCount) + " planned cut"
       + (beatAnalysis.cutCount === 1 ? "" : "s")
       + " · " + editDuration.toFixed(2) + " s edit"));
+  const confidence = beatAnalysis.tempoConfidence;
+  if (confidence && typeof confidence.summary === "string") {
+    host.appendChild(el(
+      "div",
+      "beat-duration-note",
+      confidence.summary,
+    ));
+  }
   if (
     Number.isFinite(audioDuration) &&
     Number.isFinite(mediaDuration) &&
@@ -1006,9 +1268,10 @@ function renderBeatAnalysis() {
   }
 }
 
-function resetBeatAnalysis() {
+function resetBeatAnalysis(stale) {
   beatAnalysis = null;
   beatAnalysisSignature = "";
+  beatAnalysisStale = stale === true;
   renderBeatAnalysis();
 }
 
@@ -1022,6 +1285,7 @@ function appendBeatEventToggle(host, name, def) {
   control.addEventListener("change", () => {
     resetBeatAnalysis();
     updateReadiness();
+    saveRecipeState();
   });
   label.appendChild(control);
   const copy = el("span");
@@ -1052,6 +1316,7 @@ function renderBeatMediaList() {
       resetBeatAnalysis();
       renderBeatMediaList();
       updateReadiness();
+      saveRecipeState();
     };
     row.appendChild(remove);
     list.appendChild(row);
@@ -1074,6 +1339,7 @@ async function chooseBeatMedia() {
     resetBeatAnalysis();
     renderBeatMediaList();
     updateReadiness();
+    saveRecipeState();
   } catch (error) {
     banner("bad", escapeHtml(error.message));
   }
@@ -1095,6 +1361,7 @@ async function analyzeBeatSync() {
     if (signature !== beatSyncFingerprint(collectParams("Full"))) return;
     beatAnalysis = result;
     beatAnalysisSignature = signature;
+    beatAnalysisStale = false;
   } catch (error) {
     beatAnalysis = null;
     beatAnalysisSignature = "";
@@ -1251,7 +1518,11 @@ function renderCinematicParams() {
     option.textContent = path.split("/").pop();
     logoSelect.appendChild(option);
   }
-  logoSelect.addEventListener("input", () => { updateReadiness(); renderStage(); });
+  logoSelect.addEventListener("input", () => {
+    updateReadiness();
+    renderStage();
+    saveRecipeState();
+  });
   logoRow.appendChild(logoSelect);
   const addLogo = el("button", "browse", "Add…");
   addLogo.type = "button";
@@ -1270,6 +1541,7 @@ function renderCinematicParams() {
       logoSelect.appendChild(option);
       logoSelect.value = result.path;
       updateReadiness();
+      saveRecipeState();
     } catch (error) {
       banner("bad", escapeHtml(error.message));
     }
@@ -1633,6 +1905,7 @@ async function chooseFile(def, control) {
         resetBeatAnalysis();
       }
       updateReadiness();
+      saveRecipeState();
     }
   } catch (error) {
     banner("bad", escapeHtml(error.message));
@@ -1699,8 +1972,17 @@ function updateReadiness() {
   }
 }
 
-function renderParams() {
+function finishParamRender(restore, generation) {
+  appendRecipeMemoryControls();
+  updateReadiness();
+  if (restore) void restoreRecipeState(selected.id, generation);
+}
+
+function renderParams(options) {
   if (!selected) return;
+  const settings = options || {};
+  const restore = settings.restore !== false;
+  const generation = ++recipeRestoreGeneration;
   $("paramsTitle").textContent = selected.title;
   $("paramsSub").textContent = "";
   clipInfo = null;
@@ -1709,10 +1991,12 @@ function renderParams() {
   if (selected.id === LAB) {
     $("btnRun").textContent = "Render " + selectedLook;
     renderCinematicParams();
+    finishParamRender(restore, generation);
     return;
   }
   if (selected.id === BEAT_SYNC) {
     renderBeatSyncParams();
+    finishParamRender(restore, generation);
     return;
   }
   $("btnDry").textContent = "Preview plan";
@@ -1740,7 +2024,7 @@ function renderParams() {
     }
     appendParamField(host, name, def);
   }
-  updateReadiness();
+  finishParamRender(restore, generation);
 }
 
 function collectParams(renderMode) {
