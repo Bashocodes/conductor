@@ -862,6 +862,36 @@ export async function startConductorServer(options: ServeOptions): Promise<{
       return;
     }
 
+    if (
+      url.pathname === "/api/paths/validate" &&
+      request.method === "POST"
+    ) {
+      const body = (await readJsonBody(request)) as { paths?: unknown };
+      if (
+        !Array.isArray(body.paths) ||
+        body.paths.length > 250 ||
+        body.paths.some(
+          (path) => typeof path !== "string" || !path.startsWith("/"),
+        )
+      ) {
+        sendJson(response, 400, {
+          error: "Path validation requires at most 250 absolute paths.",
+        });
+        return;
+      }
+      const paths = await Promise.all(
+        body.paths.map(async (path) => ({
+          path,
+          exists: await stat(path).then(() => true).catch(() => false),
+          parentExists: await stat(dirname(path))
+            .then((info) => info.isDirectory())
+            .catch(() => false),
+        })),
+      );
+      sendJson(response, 200, { paths });
+      return;
+    }
+
     /**
      * Reports what a clip actually is, before anything is built from it.
      *
@@ -1240,6 +1270,7 @@ export async function startConductorServer(options: ServeOptions): Promise<{
         beatCount: prepared.params.planBeatCount,
         cutCount: prepared.params.planCutCount,
         estimatedBpm: prepared.params.planEstimatedBpm,
+        tempoConfidence: prepared.params.planTempoConfidence,
         durationSeconds: prepared.params.planDurationSeconds,
         audioDurationSeconds: prepared.params.planAudioDurationSeconds,
         mediaDurationSeconds: prepared.params.planMediaDurationSeconds,

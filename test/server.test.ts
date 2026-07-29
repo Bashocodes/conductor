@@ -104,6 +104,13 @@ describe("conductor ui server", () => {
     expect(() => new Function(script)).not.toThrow();
     expect(script).toContain("/api/render?token=");
     expect(script).toContain("/api/beat-sync/analyze");
+    expect(script).toContain("/api/paths/validate");
+    expect(script).toContain('"conductor.params." + recipeId');
+    expect(script).toContain("Clear saved settings");
+    expect(script).toContain("Restored beat map is stale.");
+    expect(script).not.toMatch(
+      /localStorage\.setItem\([^)]*(?:TOKEN|sessionToken)/,
+    );
     expect(script).toContain('"step-successes"');
     expect(script).toContain('"Show details"');
   });
@@ -405,6 +412,35 @@ describe("conductor ui server", () => {
     });
     expect(beatSync?.params.brandPulse?.default).toBe(false);
     expect(beatSync?.params.pixelSort?.default).toBe(false);
+  });
+
+  it("validates restored source paths and save-path parents without reading files", async () => {
+    const url = await serve();
+    const token = await tokenFor(url);
+    const directory = await mkdtemp(join(tmpdir(), "conductor-memory-"));
+    const existing = join(directory, "source.mov");
+    const missing = join(directory, "moved.mov");
+    const futureOutput = join(directory, "delivery.mp4");
+    await writeFile(existing, "media");
+
+    const response = await fetch(`${url}api/paths/validate`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-conductor-token": token,
+      },
+      body: JSON.stringify({
+        paths: [existing, missing, futureOutput],
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      paths: [
+        { path: existing, exists: true, parentExists: true },
+        { path: missing, exists: false, parentExists: true },
+        { path: futureOutput, exists: false, parentExists: true },
+      ],
+    });
   });
 
   it("converts an After Effects HLG still into something a browser shows honestly", () => {
