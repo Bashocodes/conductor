@@ -40,11 +40,12 @@ describe("beat-sync planning foundation", () => {
       ],
       { brandPulse: true },
     );
-    expect(events[0]?.targets).toEqual(["light-accent", "camera-impact"]);
+    expect(events[0]?.targets).toEqual(["camera-impact"]);
     expect(events[1]?.targets).toEqual([
       "cut",
       "transition-apex",
       "light-accent",
+      "camera-impact",
       "brand-pulse",
     ]);
   });
@@ -61,7 +62,7 @@ describe("beat-sync planning foundation", () => {
     });
     expect(restrained.map((event) => event.targets)).toEqual([
       [],
-      ["light-accent"],
+      [],
       ["cut", "light-accent"],
     ]);
 
@@ -70,9 +71,19 @@ describe("beat-sync planning foundation", () => {
       allowedEventFamilies: ["cuts", "camera"],
     });
     expect(active.map((event) => event.targets)).toEqual([
+      [],
+      ["cut", "camera-impact"],
+      ["cut", "camera-impact"],
+    ]);
+
+    const impact = buildBeatSyncEvents(beats, {
+      density: "impact",
+      allowedEventFamilies: ["light", "camera"],
+    });
+    expect(impact.map((event) => event.targets)).toEqual([
       ["camera-impact"],
-      ["cut"],
-      ["cut"],
+      ["light-accent", "camera-impact"],
+      ["light-accent", "camera-impact"],
     ]);
   });
 
