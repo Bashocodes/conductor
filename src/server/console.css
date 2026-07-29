@@ -227,6 +227,14 @@
   .beat-analysis b { color: var(--ink); }
   .beat-analysis.pending { border-color: rgba(224,175,104,.5); color: #f3ddb6; }
   .beat-analysis.ready { border-color: rgba(121,201,154,.5); color: #c9f5d9; }
+  .beat-analysis.ready.low-confidence { border-color: rgba(240,122,122,.7);
+                                        background: rgba(240,122,122,.08);
+                                        color: #ffd4d4; }
+  .beat-grid-readout { margin-top: 7px; color: var(--ink); font: 11px/1.45 var(--mono); }
+  .beat-confidence-warning { margin-top: 7px; padding: 7px 8px;
+                             border: 1px solid rgba(240,122,122,.45);
+                             border-radius: 6px; background: rgba(240,122,122,.09);
+                             color: #ffd4d4; font-weight: 600; line-height: 1.45; }
   .beat-duration-note { margin-top: 6px; color: var(--ink-2); line-height: 1.5; }
   .alignment-evidence { margin-top: 10px; padding: 9px 10px; border-radius: 7px;
                         font: 11.5px/1.5 var(--mono); }

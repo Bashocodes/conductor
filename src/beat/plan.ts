@@ -71,16 +71,20 @@ export interface BeatSyncEvent {
   timeSeconds: number;
   importance: BeatImportance;
   targets: Array<
-    "cut" | "transition-apex" | "light-accent" | "camera-impact" | "brand-pulse"
+    | "cut"
+    | "glow-accent"
+    | "pixel-sort-accent"
+    | "directional-blur-accent"
+    | "brand-pulse"
   >;
 }
 
 export type BeatSyncDensity = "restrained" | "active" | "impact";
 export type BeatSyncEventFamily =
   | "cuts"
-  | "transitions"
-  | "light"
-  | "camera"
+  | "glow"
+  | "pixel-sort"
+  | "directional-blur"
   | "brand-pulse";
 
 export interface BeatSyncEventOptions {
@@ -90,53 +94,40 @@ export interface BeatSyncEventOptions {
 }
 
 /**
- * Defines the edit contract before any AE work begins. Strong beats carry cuts
- * and transition peaks; ordinary beats carry restrained light/camera accents.
- * Branding pulses are opt-in because a brand protection mark should
- * normally remain subtle rather than competing with the footage.
+ * Defines the edit contract before any AE work begins.
+ *
+ * The three visual effect families are deliberately tier-exclusive:
+ * downbeats bloom, primary-only beats pixel-sort, and ordinary beats receive
+ * directional blur. Density changes which lower tiers participate, never
+ * which effect represents a tier. Branding remains an independent opt-in
+ * protection layer.
  */
 export function buildBeatSyncEvents(
   beats: QuantizedBeat[],
   options: BeatSyncEventOptions = {},
 ): BeatSyncEvent[] {
   return beats.map((beat) => {
-    let targets: BeatSyncEvent["targets"];
-    if (options.density === "restrained") {
-      targets =
-        beat.importance === "downbeat"
-          ? [
-              "cut",
-              "transition-apex",
-              "light-accent",
-              "camera-impact",
-            ]
-          : [];
-    } else if (options.density === "active") {
-      targets =
-        beat.importance === "downbeat"
-          ? [
-              "cut",
-              "transition-apex",
-              "light-accent",
-              "camera-impact",
-            ]
-          : beat.importance === "primary"
-            ? ["cut", "camera-impact"]
-            : [];
-    } else {
-      // Impact is the only density allowed to answer ordinary beats. Stronger
-      // tiers receive every enabled family; their actual magnitudes remain
-      // tiered in the Studio planner.
-      targets =
-        beat.importance === "beat"
-          ? ["camera-impact"]
-          : [
-              "cut",
-              "transition-apex",
-              "light-accent",
-              "camera-impact",
-            ];
+    const density = options.density ?? "impact";
+    const targets: BeatSyncEvent["targets"] = [];
+    const strongEnoughToCut =
+      beat.importance === "downbeat" ||
+      (density !== "restrained" && beat.importance === "primary");
+    if (strongEnoughToCut) targets.push("cut");
+
+    if (beat.importance === "downbeat") {
+      targets.push("glow-accent");
+    } else if (
+      beat.importance === "primary" &&
+      density !== "restrained"
+    ) {
+      targets.push("pixel-sort-accent");
+    } else if (
+      beat.importance === "beat" &&
+      density === "impact"
+    ) {
+      targets.push("directional-blur-accent");
     }
+
     if (options.brandPulse === true && beat.importance !== "beat") {
       targets.push("brand-pulse");
     }
@@ -149,12 +140,12 @@ export function buildBeatSyncEvents(
             const family: BeatSyncEventFamily =
               target === "cut"
                 ? "cuts"
-                : target === "transition-apex"
-                  ? "transitions"
-                  : target === "light-accent"
-                    ? "light"
-                    : target === "camera-impact"
-                      ? "camera"
+                : target === "glow-accent"
+                  ? "glow"
+                  : target === "pixel-sort-accent"
+                    ? "pixel-sort"
+                    : target === "directional-blur-accent"
+                      ? "directional-blur"
                       : "brand-pulse";
             return allowed.includes(family);
           });

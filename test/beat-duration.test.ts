@@ -55,8 +55,9 @@ const params = {
   audio: "/media/score.mp3",
   media: ["/media/short.mov"],
   density: "active",
+  tempoOctave: "detected",
+  phaseNudge: 0,
   cuts: true,
-  transitions: true,
   light: true,
   camera: true,
   pixelSort: true,
@@ -80,16 +81,16 @@ describe("Beat Sync media-governed duration", () => {
     expect(prepared.params.planMediaDurationSeconds).toBe(8.057007);
     expect(prepared.params.planDurationLimit).toBe("media");
     expect(prepared.params.planDurationSeconds).toBe(241 / 30);
+    expect(prepared.params.planFirstDownbeatSeconds).toBe(0.5);
 
     const duration = prepared.params.planDurationSeconds as number;
     const markers = prepared.params.planMarkers as Array<{ timeSeconds: number }>;
     expect(markers.length).toBeGreaterThan(0);
     expect(markers.every((marker) => marker.timeSeconds < duration)).toBe(true);
     for (const name of [
-      "planCameraKeyframes",
-      "planLightKeyframes",
-      "planTransitionKeyframes",
+      "planGlowKeyframes",
       "planPixelSortKeyframes",
+      "planDirectionalBlurKeyframes",
       "planBrandKeyframes",
     ]) {
       const keyframes = prepared.params[name] as Array<{ time: number }>;

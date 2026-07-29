@@ -1186,8 +1186,9 @@ function beatSyncFingerprint(params) {
     audio: params.audio || "",
     media: params.media || [],
     density: params.density,
+    tempoOctave: params.tempoOctave,
+    phaseNudge: params.phaseNudge,
     cuts: params.cuts,
-    transitions: params.transitions,
     light: params.light,
     camera: params.camera,
     pixelSort: params.pixelSort,
@@ -1222,23 +1223,39 @@ function renderBeatAnalysis() {
         : " The detected beat count and estimated tempo will appear here."));
     return;
   }
-  host.className = "beat-analysis ready";
+  const confidence = beatAnalysis.tempoConfidence;
+  const confidenceLevel =
+    confidence && typeof confidence.level === "string"
+      ? confidence.level.toUpperCase()
+      : "UNKNOWN";
+  const lowConfidence = confidenceLevel === "LOW";
+  host.className =
+    "beat-analysis ready" + (lowConfidence ? " low-confidence" : "");
   const bpm = Number(beatAnalysis.estimatedBpm);
+  const firstDownbeat = Number(beatAnalysis.firstDownbeatSeconds);
   const editDuration = Number(beatAnalysis.durationSeconds);
   const audioDuration = Number(beatAnalysis.audioDurationSeconds);
   const mediaDuration = Number(beatAnalysis.mediaDurationSeconds);
   host.appendChild(el("b", null,
     String(beatAnalysis.beatCount) + " beats · "
-      + (bpm > 0 ? String(Math.round(bpm * 100) / 100) + " BPM" : "tempo unavailable")));
+      + (bpm > 0 ? String(Math.round(bpm * 100) / 100) + " BPM" : "tempo unavailable")
+      + " · " + confidenceLevel + " confidence"));
   host.appendChild(document.createTextNode(
     " · " + String(beatAnalysis.cutCount) + " planned cut"
       + (beatAnalysis.cutCount === 1 ? "" : "s")
       + " · " + editDuration.toFixed(2) + " s edit"));
-  const confidence = beatAnalysis.tempoConfidence;
+  host.appendChild(el(
+    "div",
+    "beat-grid-readout",
+    "First downbeat "
+      + (Number.isFinite(firstDownbeat) ? firstDownbeat.toFixed(3) + " s" : "unavailable")
+      + " · tempo " + String(beatAnalysis.tempoOctave || "detected")
+      + " · phase " + Number(beatAnalysis.phaseNudge || 0).toFixed(2) + " beat",
+  ));
   if (confidence && typeof confidence.summary === "string") {
     host.appendChild(el(
       "div",
-      "beat-duration-note",
+      lowConfidence ? "beat-confidence-warning" : "beat-duration-note",
       confidence.summary,
     ));
   }
@@ -1275,7 +1292,7 @@ function resetBeatAnalysis(stale) {
   renderBeatAnalysis();
 }
 
-function appendBeatEventToggle(host, name, def) {
+function appendBeatEventToggle(host, name, def, displayLabel) {
   const label = el("label", "beat-family");
   const control = document.createElement("input");
   control.type = "checkbox";
@@ -1289,7 +1306,7 @@ function appendBeatEventToggle(host, name, def) {
   });
   label.appendChild(control);
   const copy = el("span");
-  copy.appendChild(el("b", null, humanLabel(name)));
+  copy.appendChild(el("b", null, displayLabel || humanLabel(name)));
   copy.appendChild(el("small", null, def.description));
   label.appendChild(copy);
   host.appendChild(label);
@@ -1404,16 +1421,23 @@ function renderBeatSyncParams() {
 
   const edit = appendSection(
     host,
-    "Edit hierarchy",
-    "Density changes which strong tiers cut. Ordinary beats remain smaller light/camera accents.",
+    "Tier-routed vocabulary",
+    "Restrained blooms downbeats. Active adds primary-only Pixel Sort. Impact also gives ordinary beats a two-frame Directional Blur. The three effects never fire on the same grid event.",
   );
   appendSegmented(edit.body, "density", defs.density.values, defs.density.default, {
     hint: defs.density.description,
     onChange: resetBeatAnalysis,
   });
   const families = el("div", "beat-family-grid");
-  for (const name of ["cuts", "transitions", "light", "camera", "pixelSort", "brandPulse"]) {
-    appendBeatEventToggle(families, name, defs[name]);
+  const familyLabels = {
+    cuts: "Strong-tier Cuts",
+    light: "Downbeat Glow",
+    pixelSort: "Primary Pixel Sort",
+    camera: "Ordinary-beat Directional Blur",
+    brandPulse: "Brand pulse",
+  };
+  for (const name of ["cuts", "light", "pixelSort", "camera", "brandPulse"]) {
+    appendBeatEventToggle(families, name, defs[name], familyLabels[name]);
   }
   edit.body.appendChild(families);
   appendSlider(edit.body, "frameRate", defs.frameRate, {
@@ -1426,10 +1450,36 @@ function renderBeatSyncParams() {
     onInput: resetBeatAnalysis,
   });
 
+  const correction = appendSection(
+    host,
+    "Grid correction",
+    "Leave both controls at their detected defaults unless the audible pulse says the estimator chose the wrong octave or placed the grid between beats.",
+  );
+  appendSegmented(
+    correction.body,
+    "tempoOctave",
+    defs.tempoOctave.values,
+    defs.tempoOctave.default,
+    {
+      label: "Tempo octave",
+      hint: defs.tempoOctave.description,
+      onChange: resetBeatAnalysis,
+    },
+  );
+  appendSlider(correction.body, "phaseNudge", defs.phaseNudge, {
+    label: "Phase nudge",
+    min: -0.5,
+    max: 0.5,
+    step: 0.05,
+    format: (value) => (value > 0 ? "+" : "") + value.toFixed(2) + " beat",
+    hint: defs.phaseNudge.description,
+    onInput: resetBeatAnalysis,
+  });
+
   const analysis = appendSection(
     host,
     "Measured map",
-    "This is a pre-render measurement, not a beat-sync claim. Fine onset timing drives parameter curves; cuts still quantize to frames (up to 16.67 ms nearest-frame error at 30 fps).",
+    "Confidence, resulting BPM, and the first downbeat appear here before render. Nearby sample timing drives effect peaks; cuts still quantize to frames.",
   );
   const analyze = el("button", "act small", "Analyze track");
   analyze.type = "button";
