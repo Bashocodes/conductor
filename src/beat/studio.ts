@@ -93,8 +93,9 @@ function pulseKeyframes(
   frameRate: number,
   durationSeconds: number,
   baseValue: JsonValue,
-  peakValue: JsonValue,
+  peakValue: (event: BeatSyncEvent) => JsonValue,
   onlyNonCuts: boolean,
+  releaseFrames = 2,
 ): Array<{ time: number; value: JsonValue }> {
   const finalFrame = Math.max(1, Math.round(durationSeconds * frameRate));
   const values = new Map<number, JsonValue>([
@@ -109,8 +110,11 @@ function pulseKeyframes(
       continue;
     }
     values.set(Math.max(0, event.frame - 1), baseValue);
-    values.set(event.frame, peakValue);
-    values.set(Math.min(finalFrame, event.frame + 1), baseValue);
+    values.set(event.frame, peakValue(event));
+    values.set(
+      Math.min(finalFrame, event.frame + releaseFrames),
+      baseValue,
+    );
   }
   return [...values.entries()]
     .sort(([left], [right]) => left - right)
@@ -214,6 +218,41 @@ function enabledFamilies(
   if (params.camera) families.push("camera");
   if (params.brandPulse) families.push("brand-pulse");
   return families;
+}
+
+function cameraPeak(
+  params: BeatSyncStudioParams,
+  event: BeatSyncEvent,
+): JsonValue {
+  const scale =
+    params.density === "restrained"
+      ? 101.5
+      : params.density === "active"
+        ? event.importance === "downbeat" ? 102.2 : 101.4
+        : event.importance === "downbeat"
+          ? 103.2
+          : event.importance === "primary"
+            ? 102.2
+            : 101.2;
+  return [scale, scale];
+}
+
+function contrastPeak(
+  params: BeatSyncStudioParams,
+  event: BeatSyncEvent,
+): JsonValue {
+  if (params.density === "restrained") return 4;
+  if (params.density === "active") return 8;
+  return event.importance === "downbeat" ? 14 : 8;
+}
+
+function exposurePeak(
+  params: BeatSyncStudioParams,
+  event: BeatSyncEvent,
+): JsonValue {
+  if (params.density === "restrained") return 0.06;
+  if (params.density === "active") return 0.1;
+  return event.importance === "downbeat" ? 0.18 : 0.1;
 }
 
 function buildMediaSegments(
@@ -393,8 +432,9 @@ export function buildBeatSyncStudioPlan(
       params.frameRate,
       durationSeconds,
       [100, 100],
-      [103, 103],
+      (event) => cameraPeak(params, event),
       true,
+      3,
     ),
     lightKeyframes: pulseKeyframes(
       events,
@@ -402,8 +442,9 @@ export function buildBeatSyncStudioPlan(
       params.frameRate,
       durationSeconds,
       0,
-      8,
+      (event) => contrastPeak(params, event),
       true,
+      2,
     ),
     transitionKeyframes: pulseKeyframes(
       events,
@@ -411,8 +452,9 @@ export function buildBeatSyncStudioPlan(
       params.frameRate,
       durationSeconds,
       0,
-      0.18,
+      (event) => exposurePeak(params, event),
       false,
+      3,
     ),
     pixelSortKeyframes: pixelSortEnvelopeKeyframes(
       analysis,
@@ -425,8 +467,9 @@ export function buildBeatSyncStudioPlan(
       params.frameRate,
       durationSeconds,
       10,
-      24,
+      (event) => event.importance === "downbeat" ? 26 : 20,
       false,
+      2,
     ),
   };
 }

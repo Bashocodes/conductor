@@ -461,7 +461,7 @@ export const beatSyncEditRecipe = recipeSchema.parse({
       args: {
         layerId:
           "${steps.add-beat-sync-light.result.structuredContent.effectId}",
-        property: "Brightness",
+        property: "Contrast",
         timeMode: "seconds",
         keyframes: "${params.planLightKeyframes}",
         easing: {
@@ -482,6 +482,8 @@ export const beatSyncEditRecipe = recipeSchema.parse({
           },
         },
       },
+      note:
+        "Shapes contrast on structural beats instead of flashing flat white brightness on every detected onset.",
     },
     {
       id: "add-beat-sync-transition",

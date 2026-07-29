@@ -78,7 +78,12 @@ describe("Beat Sync Studio recipe", () => {
       15, 45, 75, 105,
     ]);
     expect(plan.cameraKeyframes.length).toBeGreaterThanOrEqual(2);
-    expect(plan.lightKeyframes.length).toBeGreaterThan(2);
+    // Cut events already supply the visual change in a multi-clip bin, so
+    // light/camera accents do not stack on top of them.
+    expect(plan.lightKeyframes).toEqual([
+      { time: 0, value: 0 },
+      { time: 4.5, value: 0 },
+    ]);
     expect(plan.pixelSortKeyframes).toContainEqual({ time: 0.5, value: 100 });
     expect(plan.pixelSortKeyframes).toContainEqual({ time: 1, value: 30 });
     expect(plan.pixelSortKeyframes).toContainEqual({ time: 1.5, value: 60 });
@@ -146,6 +151,67 @@ describe("Beat Sync Studio recipe", () => {
     expect(plan.cutCount).toBe(0);
     expect(plan.mediaSegments).toHaveLength(1);
     expect(plan.markers).toHaveLength(analysis.onsets.length);
+  });
+
+  it("makes restrained, active, and impact genuinely different", () => {
+    const oneClip = {
+      ...publicParams,
+      media: ["/media/continuous.mov"],
+    };
+    const makePlan = (density: "restrained" | "active" | "impact") =>
+      buildBeatSyncStudioPlan(
+        { ...oneClip, density },
+        analysis,
+        continuousDurationBudget,
+      );
+    const restrained = makePlan("restrained");
+    const active = makePlan("active");
+    const impact = makePlan("impact");
+    const scalePeaks = (plan: typeof active) =>
+      plan.cameraKeyframes.filter(
+        (keyframe) =>
+          Array.isArray(keyframe.value) &&
+          Number(keyframe.value[0]) > 100,
+      );
+    const numericPeaks = (
+      keyframes: Array<{ time: number; value: unknown }>,
+    ) => keyframes.filter((keyframe) => Number(keyframe.value) > 0);
+
+    expect(scalePeaks(restrained)).toHaveLength(2);
+    expect(scalePeaks(active)).toHaveLength(4);
+    expect(scalePeaks(impact)).toHaveLength(8);
+    expect(scalePeaks(active).map((keyframe) => keyframe.value)).toContainEqual([
+      101.4,
+      101.4,
+    ]);
+    expect(scalePeaks(active).map((keyframe) => keyframe.value)).toContainEqual([
+      102.2,
+      102.2,
+    ]);
+    expect(numericPeaks(restrained.lightKeyframes).map((keyframe) => keyframe.value))
+      .toEqual([4, 4]);
+    expect(numericPeaks(active.lightKeyframes).map((keyframe) => keyframe.value))
+      .toEqual([8, 8]);
+    expect(Math.max(
+      ...numericPeaks(impact.lightKeyframes).map((keyframe) =>
+        Number(keyframe.value)
+      ),
+    )).toBe(14);
+    expect(Math.max(
+      ...numericPeaks(restrained.transitionKeyframes).map((keyframe) =>
+        Number(keyframe.value)
+      ),
+    )).toBe(0.06);
+    expect(Math.max(
+      ...numericPeaks(active.transitionKeyframes).map((keyframe) =>
+        Number(keyframe.value)
+      ),
+    )).toBe(0.1);
+    expect(Math.max(
+      ...numericPeaks(impact.transitionKeyframes).map((keyframe) =>
+        Number(keyframe.value)
+      ),
+    )).toBe(0.18);
   });
 
   it("executes as ordinary verified ToolContract data and ends in HLG delivery", async () => {

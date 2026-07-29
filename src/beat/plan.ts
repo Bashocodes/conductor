@@ -104,29 +104,38 @@ export function buildBeatSyncEvents(
     if (options.density === "restrained") {
       targets =
         beat.importance === "downbeat"
-          ? ["cut", "transition-apex", "light-accent"]
-          : beat.importance === "primary"
-            ? ["light-accent"]
-            : [];
+          ? [
+              "cut",
+              "transition-apex",
+              "light-accent",
+              "camera-impact",
+            ]
+          : [];
     } else if (options.density === "active") {
       targets =
-        beat.importance === "beat"
-          ? ["light-accent", "camera-impact"]
-          : ["cut", "transition-apex", "light-accent"];
+        beat.importance === "downbeat"
+          ? [
+              "cut",
+              "transition-apex",
+              "light-accent",
+              "camera-impact",
+            ]
+          : beat.importance === "primary"
+            ? ["cut", "camera-impact"]
+            : [];
     } else {
-      // `impact` and the legacy no-option call preserve the original hierarchy:
-      // strong beats cut; ordinary beats receive light/camera accents only.
+      // Impact is the only density allowed to answer ordinary beats. Stronger
+      // tiers receive every enabled family; their actual magnitudes remain
+      // tiered in the Studio planner.
       targets =
         beat.importance === "beat"
-          ? ["light-accent", "camera-impact"]
-          : ["cut", "transition-apex", "light-accent"];
-    }
-    if (
-      options.density === "impact" &&
-      beat.importance !== "beat" &&
-      !targets.includes("camera-impact")
-    ) {
-      targets.push("camera-impact");
+          ? ["camera-impact"]
+          : [
+              "cut",
+              "transition-apex",
+              "light-accent",
+              "camera-impact",
+            ];
     }
     if (options.brandPulse === true && beat.importance !== "beat") {
       targets.push("brand-pulse");
