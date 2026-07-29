@@ -104,6 +104,8 @@ describe("conductor ui server", () => {
     expect(() => new Function(script)).not.toThrow();
     expect(script).toContain("/api/render?token=");
     expect(script).toContain("/api/beat-sync/analyze");
+    expect(script).toContain('"step-successes"');
+    expect(script).toContain('"Show details"');
   });
 
   it("emits a hosted copy that points only at the visitor's loopback server", () => {

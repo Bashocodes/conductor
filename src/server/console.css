@@ -152,6 +152,18 @@
   .out-scroll::-webkit-scrollbar-track { background: transparent; }
   .out-scroll::-webkit-scrollbar-thumb { border-radius: 99px; background: var(--line-2); }
   .out-scroll:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; border-radius: 5px; }
+  .step-successes { margin-bottom: 8px; border-bottom: 1px solid var(--line); }
+  .step-successes summary { display: flex; gap: 11px; align-items: center; padding: 9px 0;
+                            color: var(--ink-2); cursor: pointer; list-style: none; }
+  .step-successes summary::-webkit-details-marker { display: none; }
+  .step-successes summary .mark { flex: none; width: 18px; text-align: center;
+                                  font: 12px var(--mono); }
+  .step-successes summary .id { font: 12.5px var(--mono); }
+  .step-successes .step-expand-hint { margin-left: auto; color: var(--ink-3);
+                                      font: 11px var(--mono); }
+  .step-successes[open] .step-expand-hint { font-size: 0; }
+  .step-successes[open] .step-expand-hint::after { content: "Hide details"; font-size: 11px; }
+  .step-successes[open] > .steps { margin-bottom: 7px; padding-left: 29px; }
   .steps { list-style: none; }
   .steps li { display: flex; gap: 11px; align-items: flex-start; padding: 9px 0;
               border-bottom: 1px solid var(--line); }
@@ -213,6 +225,7 @@
   .beat-analysis b { color: var(--ink); }
   .beat-analysis.pending { border-color: rgba(224,175,104,.5); color: #f3ddb6; }
   .beat-analysis.ready { border-color: rgba(121,201,154,.5); color: #c9f5d9; }
+  .beat-duration-note { margin-top: 6px; color: var(--ink-2); line-height: 1.5; }
   .alignment-evidence { margin-top: 10px; padding: 9px 10px; border-radius: 7px;
                         font: 11.5px/1.5 var(--mono); }
   .alignment-evidence.verified { border: 1px solid rgba(121,201,154,.4);
