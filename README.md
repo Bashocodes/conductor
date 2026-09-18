@@ -1,5 +1,8 @@
 # Conductor
 
+> Part of the **Director suite**: VETTU · Conductor · Director Open · Reel-HDR.
+> Start at the front door: https://github.com/Bashocodes/director-open
+
 The craft layer for Adobe MCP servers. MCP servers give an agent hands; Conductor gives it technique. Recipes for motion
 design (title cards, motivated transitions, an HDR-safe grade, a cinematic look lab) are deterministic and replayable:
 proper easing, verified renders, and a JSON journal of every run. No AI is required; bring one if you want. Tested
