@@ -1,22 +1,20 @@
 # Conductor
 
-**The craft layer for Adobe MCP servers.**
+The craft layer for Adobe MCP servers. MCP servers give an agent hands; Conductor gives it technique. Recipes for motion
+design (title cards, motivated transitions, an HDR-safe grade, a cinematic look lab) are deterministic and replayable:
+proper easing, verified renders, and a JSON journal of every run. No AI is required; bring one if you want. Tested
+against a live After Effects 26.3.
 
-MCP servers give agents hands; Conductor gives them technique: deterministic,
-replayable motion-design recipes with proper easing, motivated transitions,
-and verified renders. No AI required; bring one if you want.
+```text
+$ conductor --help
+Run deterministic motion-design recipes over MCP-enabled creative tools.
 
-Conductor is an MCP client and recipe engine. It does not replace an Adobe MCP
-server, bundle Adobe automation code, or require a model to execute a recipe.
-The current release is `0.1.0-alpha.0`. All four reference recipes have been
-run against a live **After Effects 26.3** over an `execute_extend_script` MCP
-server. The title and transition motion was read back from the host; the HDR
-recipe was rendered through a 10-bit ProRes HLG intermediate and validated as
-HEVC Main 10 BT.2020/HLG; and the cinematic laboratory produced all seven
-two-second comparisons through the same verified pipeline.
-
-Only After Effects has been exercised against a real host. The Photoshop,
-Premiere and Illustrator paths remain unproven.
+Commands:
+  recipes                 List registered recipes and their parameters
+  run [options] <recipe>  Run a registered recipe
+  ask [options] <goal>    Ask an optional brain to propose a recipe and
+                          parameters; execution requires confirmation
+```
 
 ## The gap
 
@@ -402,4 +400,6 @@ vulnerabilities privately as described in [`SECURITY.md`](SECURITY.md).
 
 ## License
 
-[MIT](LICENSE) © 2026 KALAI LABS
+MIT. See [LICENSE](LICENSE).
+
+Made by cyberyogi (Sharan Ramakrishna). Everything I make: https://inkoji.com/cyberyogi

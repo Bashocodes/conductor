@@ -4,7 +4,7 @@
   "description": "The deterministic craft layer for Adobe MCP servers.",
   "private": true,
   "license": "MIT",
-  "author": "KALAI LABS",
+  "author": "Sharan Ramakrishna (cyberyogi)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Bashocodes/conductor.git"
